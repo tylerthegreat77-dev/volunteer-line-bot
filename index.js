@@ -8,6 +8,7 @@ const express = require('express');
 const line = require('@line/bot-sdk');
 const mongoose = require('mongoose');
 const path = require('path');
+const ExcelJS = require('exceljs');
 
 const app = express();
 
@@ -78,11 +79,76 @@ app.get('/api/admin/summary', async (req, res) => {
   }
 });
 
-// 2. หน้าเว็บ Dashboard สำหรับอาจารย์ (เข้าผ่าน /admin)
+// 2. Route สำหรับ Export ข้อมูลเป็นไฟล์ Excel (.xlsx)
+app.get('/admin/export-excel', async (req, res) => {
+  try {
+    const summary = await Volunteer.aggregate([
+      { $sort: { date: -1 } },
+      {
+        $group: {
+          _id: "$studentId",
+          name: { $first: "$name" },
+          totalHours: { $sum: "$hours" },
+          recordCount: { $sum: 1 },
+          lastUpdated: { $max: "$date" }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('รายงานชั่วโมงจิตอาสา');
+
+    // กำหนดหัวคอลัมน์
+    worksheet.columns = [
+      { header: 'รหัสนักศึกษา', key: 'studentId', width: 20 },
+      { header: 'ชื่อ-นามสกุล', key: 'name', width: 25 },
+      { header: 'จำนวนครั้งที่บันทึก', key: 'recordCount', width: 18 },
+      { header: 'ชั่วโมงสะสมรวม', key: 'totalHours', width: 18 },
+      { header: 'บันทึกล่าสุดเมื่อ', key: 'lastUpdated', width: 22 }
+    ];
+
+    // จัดสไตล์หัวตาราง (ตัวหนา + พื้นหลังสีฟ้าอ่อน)
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'DDEBF7' }
+    };
+
+    // เพิ่มข้อมูลนักศึกษาลงในไฟล์ Excel
+    summary.forEach(item => {
+      worksheet.addRow({
+        studentId: item._id,
+        name: item.name || 'ไม่ระบุชื่อ',
+        recordCount: item.recordCount,
+        totalHours: item.totalHours,
+        lastUpdated: item.lastUpdated ? new Date(item.lastUpdated).toLocaleString('th-TH') : '-'
+      });
+    });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=Volunteer_Hours_Report.xlsx'
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Error exporting Excel:', error);
+    res.status(500).send('เกิดข้อผิดพลาดในการสร้างไฟล์ Excel');
+  }
+});
+
+// 3. หน้าเว็บ Dashboard สำหรับอาจารย์ (เข้าผ่าน /admin)
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
-    <html lang="th">
+     <html lang="th">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -99,7 +165,10 @@ app.get('/admin', (req, res) => {
       <div class="container py-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
           <h2>📊 รายงานชั่วโมงจิตอาสา (สำหรับอาจารย์/เจ้าหน้าที่)</h2>
-          <button class="btn btn-outline-primary" onclick="loadData()">🔄 รีเฟรชข้อมูล</button>
+          <div>
+            <a href="/admin/export-excel" class="btn btn-success me-2">📊 ดาวน์โหลด Excel (.xlsx)</a>
+            <button class="btn btn-outline-primary" onclick="loadData()">🔄 รีเฟรชข้อมูล</button>
+          </div>
         </div>
 
         <div class="row g-3 mb-4">
