@@ -12,7 +12,7 @@ const ExcelJS = require('exceljs');
 const axios = require('axios');
 const FormData = require('form-data');
 
-// 🔑 ใส่ API Key ของ ImgBB ที่นี่
+// 🔑 ใส่ API Key ของ ImgBB ที่นี่ หรือตั้งค่าใน Environment Variable บน Render
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '29a6620a3c2df4d494f53e43d5d94286';
 
 // 🏛️ ตารางแปลงรหัสคณะเป็นชื่อคณะ
@@ -29,9 +29,15 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
+// Messaging API Client (สำหรับส่งข้อความ)
 const client = line.messagingApi 
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: config.channelAccessToken })
   : new line.Client(config);
+
+// Messaging API Blob Client (สำหรับดึงไฟล์รูปภาพใน SDK v8+)
+const blobClient = line.messagingApi 
+  ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
+  : client;
 
 // Webhook LINE
 app.post('/webhook', line.middleware(config), (req, res) => {
@@ -51,7 +57,7 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!'))
   .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
 
-// Schema เพิ่มคอลัมน์ facultyCode และ facultyName
+// Schema สำหรับเก็บข้อมูลจิตอาสา
 const volunteerSchema = new mongoose.Schema({
   userId: String,      // LINE User ID
   facultyCode: String, // รหัสคณะ (01, 02, 03)
@@ -65,7 +71,7 @@ const volunteerSchema = new mongoose.Schema({
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
-// Schema เก็บรูปชั่วคราวรอคนพิมพ์บันทึก
+// Schema สำหรับเก็บรูปภาพชั่วคราว รอคำสั่งพิมพ์บันทึก
 const tempImageSchema = new mongoose.Schema({
   userId: String,
   imageUrl: String,
@@ -78,7 +84,7 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // 👑 ADMIN DASHBOARD & API
 // ==========================================
 
-// 1. API ดึงประวัติรายการจิตอาสาทั้งหมดพร้อมคณะ
+// 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
 app.get('/api/admin/records', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -88,7 +94,7 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. Export Excel พร้อมรหัสคณะและชื่อคณะ
+// 2. Export Excel พร้อมข้อมูลคณะและลิงก์รูปภาพ
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -136,7 +142,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้า Admin Dashboard แสดงข้อมูลคณะ
+// 3. หน้า Admin Dashboard แสดงข้อมูล
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -294,7 +300,7 @@ app.get('/admin', (req, res) => {
 // ==========================================
 
 function replyTextMsg(replyToken, text) {
-  if (client.replyMessage && client.replyMessage.length === 1) {
+  if (client.replyMessage && typeof client.replyMessage === 'function') {
     return client.replyMessage({
       replyToken: replyToken,
       messages: [{ type: 'text', text }]
@@ -309,13 +315,16 @@ async function handleImageMessage(event) {
   const messageId = event.message.id;
 
   try {
-    let stream = await client.getMessageContent(messageId);
+    // ดึงไฟล์รูปภาพโดยใช้ blobClient
+    const stream = await blobClient.getMessageContent(messageId);
+    
     const chunks = [];
     for await (const chunk of stream) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
 
+    // อัปโหลดไฟล์ขึ้น ImgBB
     const formData = new FormData();
     formData.append('image', buffer.toString('base64'));
 
@@ -325,6 +334,7 @@ async function handleImageMessage(event) {
 
     const imageUrl = response.data.data.url;
 
+    // บันทึกลิงก์รูปไว้ชั่วคราว
     await TempImage.findOneAndUpdate(
       { userId },
       { imageUrl, createdAt: new Date() },
@@ -343,6 +353,7 @@ async function handleImageMessage(event) {
 }
 
 async function handleEvent(event) {
+  // หากเป็นข้อความรูปภาพ
   if (event.type === 'message' && event.message.type === 'image') {
     return handleImageMessage(event);
   }
@@ -394,7 +405,7 @@ async function handleEvent(event) {
   if (userText.startsWith('บันทึก')) {
     const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
 
-    // โครงสร้างต้องมีอย่างน้อย 5 ส่วน: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <ชั่วโมง>
+    // โครงสร้างคำสั่ง: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <ชั่วโมง>
     if (parts.length < 5) {
       return replyTextMsg(
         event.replyToken, 
