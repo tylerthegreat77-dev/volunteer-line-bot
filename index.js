@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-// บังคับให้ Node.js ใช้ Google DNS ในการค้นหาโดเมน
+// บังคับให้ Node.js ใช้ Google DNS
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -14,6 +14,13 @@ const FormData = require('form-data');
 
 // 🔑 ใส่ API Key ของ ImgBB ที่นี่
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '29a6620a3c2df4d494f53e43d5d94286';
+
+// 🏛️ ตารางแปลงรหัสคณะเป็นชื่อคณะ
+const FACULTY_MAP = {
+  '01': 'คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร',
+  '02': 'คณะบริหารธุรกิจและศิลปศาสตร์',
+  '03': 'คณะวิศวกรรมศาสตร์'
+};
 
 const app = express();
 
@@ -44,9 +51,11 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!'))
   .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
 
-// Schema เพิ่มคอลัมน์ imageUrl และ userId สำหรับผูกรูป
+// Schema เพิ่มคอลัมน์ facultyCode และ facultyName
 const volunteerSchema = new mongoose.Schema({
   userId: String,      // LINE User ID
+  facultyCode: String, // รหัสคณะ (01, 02, 03)
+  facultyName: String, // ชื่อคณะ
   studentId: String,
   name: { type: String, default: 'ไม่ระบุชื่อ' },
   hours: Number,
@@ -69,7 +78,7 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // 👑 ADMIN DASHBOARD & API
 // ==========================================
 
-// 1. API ดึงประวัติรายการจิตอาสาทั้งหมดพร้อมรูปภาพ
+// 1. API ดึงประวัติรายการจิตอาสาทั้งหมดพร้อมคณะ
 app.get('/api/admin/records', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -79,29 +88,7 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. API สรุปยอดนักศึกษา
-app.get('/api/admin/summary', async (req, res) => {
-  try {
-    const summary = await Volunteer.aggregate([
-      { $sort: { date: -1 } },
-      {
-        $group: {
-          _id: "$studentId",
-          name: { $first: "$name" },
-          totalHours: { $sum: "$hours" },
-          recordCount: { $sum: 1 },
-          lastUpdated: { $max: "$date" }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-    res.json({ success: true, data: summary });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// 3. Export Excel พร้อมลิงก์รูปภาพ
+// 2. Export Excel พร้อมรหัสคณะและชื่อคณะ
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -110,6 +97,8 @@ app.get('/admin/export-excel', async (req, res) => {
     const worksheet = workbook.addWorksheet('รายงานชั่วโมงจิตอาสา');
 
     worksheet.columns = [
+      { header: 'รหัสคณะ', key: 'facultyCode', width: 12 },
+      { header: 'ชื่อคณะ', key: 'facultyName', width: 35 },
       { header: 'รหัสนักศึกษา', key: 'studentId', width: 20 },
       { header: 'ชื่อ-นามสกุล', key: 'name', width: 25 },
       { header: 'ชั่วโมงที่บันทึก', key: 'hours', width: 15 },
@@ -126,6 +115,8 @@ app.get('/admin/export-excel', async (req, res) => {
 
     records.forEach(v => {
       worksheet.addRow({
+        facultyCode: v.facultyCode || '-',
+        facultyName: v.facultyName || 'ไม่ระบุคณะ',
         studentId: v.studentId,
         name: v.name || 'ไม่ระบุชื่อ',
         hours: v.hours,
@@ -145,7 +136,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 4. หน้า Admin Dashboard แสดงรูปภาพ
+// 3. หน้า Admin Dashboard แสดงข้อมูลคณะ
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -159,11 +150,11 @@ app.get('/admin', (req, res) => {
       <style>
         body { font-family: 'Sarabun', sans-serif; background-color: #f8f9fa; }
         .card { border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .img-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1px solid #ddd; }
+        .img-thumb { width: 55px; height: 55px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1px solid #ddd; }
       </style>
     </head>
     <body>
-      <div class="container py-4">
+      <div class="container-fluid px-4 py-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
           <h2>📊 รายงานชั่วโมงและหลักฐานจิตอาสา</h2>
           <div>
@@ -173,7 +164,19 @@ app.get('/admin', (req, res) => {
         </div>
 
         <div class="card mb-4 p-3">
-          <input type="text" id="searchInput" class="form-control" placeholder="🔍 ค้นหาด้วย รหัสนักศึกษา หรือ ชื่อ-นามสกุล..." onkeyup="filterTable()">
+          <div class="row g-2">
+            <div class="col-md-8">
+              <input type="text" id="searchInput" class="form-control" placeholder="🔍 ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล หรือ คณะ..." onkeyup="filterTable()">
+            </div>
+            <div class="col-md-4">
+              <select id="facultyFilter" class="form-select" onchange="filterTable()">
+                <option value="">🏛️ ทุกคณะ</option>
+                <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
+                <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
+                <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <div class="card p-3">
@@ -181,7 +184,8 @@ app.get('/admin', (req, res) => {
             <table class="table table-hover align-middle">
               <thead class="table-light">
                 <tr>
-                  <th>หลักฐานรูปภาพ</th>
+                  <th>หลักฐาน</th>
+                  <th>คณะ</th>
                   <th>รหัสนักศึกษา</th>
                   <th>ชื่อ-นามสกุล</th>
                   <th>ชั่วโมงที่บันทึก</th>
@@ -189,7 +193,7 @@ app.get('/admin', (req, res) => {
                 </tr>
               </thead>
               <tbody id="recordTableBody">
-                <tr><td colspan="5" class="text-center">กำลังโหลดข้อมูล...</td></tr>
+                <tr><td colspan="6" class="text-center">กำลังโหลดข้อมูล...</td></tr>
               </tbody>
             </table>
           </div>
@@ -229,7 +233,7 @@ app.get('/admin', (req, res) => {
           tbody.innerHTML = '';
 
           if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">ไม่พบข้อมูลบันทึก</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center">ไม่พบข้อมูลบันทึก</td></tr>';
             return;
           }
 
@@ -239,9 +243,14 @@ app.get('/admin', (req, res) => {
               ? \`<img src="\${item.imageUrl}" class="img-thumb" onclick="showModal('\${item.imageUrl}')">\`
               : \`<span class="badge bg-secondary">ไม่มีรูป</span>\`;
 
+            const facultyBadge = item.facultyCode 
+              ? \`<span class="badge bg-info text-dark">[\${item.facultyCode}] \${item.facultyName || ''}</span>\`
+              : \`<span class="badge bg-light text-muted">ไม่ระบุ</span>\`;
+
             const tr = document.createElement('tr');
             tr.innerHTML = \`
               <td>\${imgHtml}</td>
+              <td>\${facultyBadge}</td>
               <td><strong>\${item.studentId}</strong></td>
               <td>\${item.name || 'ไม่ระบุชื่อ'}</td>
               <td><span class="badge bg-success fs-6">\${item.hours} ชม.</span></td>
@@ -258,10 +267,18 @@ app.get('/admin', (req, res) => {
 
         function filterTable() {
           const searchText = document.getElementById('searchInput').value.toLowerCase();
-          const filtered = allRecords.filter(item => 
-            item.studentId.toLowerCase().includes(searchText) || 
-            (item.name && item.name.toLowerCase().includes(searchText))
-          );
+          const selectedFaculty = document.getElementById('facultyFilter').value;
+
+          const filtered = allRecords.filter(item => {
+            const matchSearch = item.studentId.toLowerCase().includes(searchText) || 
+                                (item.name && item.name.toLowerCase().includes(searchText)) ||
+                                (item.facultyName && item.facultyName.toLowerCase().includes(searchText));
+            
+            const matchFaculty = selectedFaculty === '' || item.facultyCode === selectedFaculty;
+
+            return matchSearch && matchFaculty;
+          });
+
           renderData(filtered);
         }
 
@@ -292,21 +309,13 @@ async function handleImageMessage(event) {
   const messageId = event.message.id;
 
   try {
-    // 1. ดึงไฟล์รูปจาก LINE
-    let stream;
-    if (client.getMessageContent) {
-      stream = await client.getMessageContent(messageId);
-    } else {
-      stream = await client.getMessageContent(messageId);
-    }
-
+    let stream = await client.getMessageContent(messageId);
     const chunks = [];
     for await (const chunk of stream) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
 
-    // 2. ส่งไฟล์ขึ้น ImgBB
     const formData = new FormData();
     formData.append('image', buffer.toString('base64'));
 
@@ -316,7 +325,6 @@ async function handleImageMessage(event) {
 
     const imageUrl = response.data.data.url;
 
-    // 3. บันทึกรูปไว้ชั่วคราว รอคนพิมพ์บันทึกชั่วโมง
     await TempImage.findOneAndUpdate(
       { userId },
       { imageUrl, createdAt: new Date() },
@@ -325,7 +333,7 @@ async function handleImageMessage(event) {
 
     return replyTextMsg(
       event.replyToken,
-      '📷 ได้รับรูปภาพหลักฐานเรียบร้อยแล้วครับ!\n\nกรุณาพิมพ์บันทึกชั่วโมงต่อได้เลย เช่น:\nบันทึก 6501234567 สมชาย ใจดี 4'
+      '📷 ได้รับรูปภาพหลักฐานเรียบร้อยแล้วครับ!\n\nกรุณาพิมพ์บันทึกชั่วโมงต่อได้เลย เช่น:\nบันทึก 01 6501234567 สมชาย ใจดี 4'
     );
 
   } catch (error) {
@@ -335,7 +343,6 @@ async function handleImageMessage(event) {
 }
 
 async function handleEvent(event) {
-  // หากนักศึกษาส่งรูปภาพเข้ามา
   if (event.type === 'message' && event.message.type === 'image') {
     return handleImageMessage(event);
   }
@@ -366,11 +373,13 @@ async function handleEvent(event) {
       const totalHours = records.reduce((sum, item) => sum + item.hours, 0);
       const validRecord = records.reverse().find(r => r.name && r.name !== 'ไม่ระบุชื่อ');
       const studentName = validRecord ? validRecord.name : (records[0].name || 'ไม่ระบุชื่อ');
+      const facultyName = validRecord ? (validRecord.facultyName || 'ไม่ระบุ') : 'ไม่ระบุ';
 
       const replyText = `📊 สรุปชั่วโมงจิตอาสา\n\n` +
                         `👤 ชื่อ: ${studentName}\n` +
                         `🆔 รหัส: ${studentId}\n` +
-                        `📝 จำนวนครั้งที่บันทึก: ${records.length} ครั้ง\n` +
+                        `🏛 คณะ: ${facultyName}\n` +
+                        `📝 บันทึกทั้งหมด: ${records.length} ครั้ง\n` +
                         `⏱ ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
 
       return replyTextMsg(event.replyToken, replyText);
@@ -381,17 +390,34 @@ async function handleEvent(event) {
     }
   }
 
-  // 2. คำสั่ง "บันทึก"
+  // 2. คำสั่ง "บันทึก" (รองรับรหัสคณะ)
   if (userText.startsWith('บันทึก')) {
     const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
 
-    if (parts.length < 4) {
-      return replyTextMsg(event.replyToken, '❌ รูปแบบคำสั่งไม่ถูกต้อง!\nกรุณาพิมพ์: บันทึก <รหัสนักศึกษา> <ชื่อ-นามสกุล> <จำนวนชั่วโมง>\n\nตัวอย่าง:\nบันทึก 6501234567 สมชาย ใจดี 4');
+    // โครงสร้างต้องมีอย่างน้อย 5 ส่วน: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <ชั่วโมง>
+    if (parts.length < 5) {
+      return replyTextMsg(
+        event.replyToken, 
+        '❌ รูปแบบคำสั่งไม่ถูกต้อง!\nกรุณาพิมพ์: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <จำนวนชั่วโมง>\n\n' +
+        '🏛 รหัสคณะ:\n01 = วิทยาศาสตร์และเทคโนโลยีการเกษตร\n02 = บริหารธุรกิจและศิลปศาสตร์\n03 = วิศวกรรมศาสตร์\n\n' +
+        'ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4'
+      );
     }
 
-    const studentId = parts[1];
+    const facultyCode = parts[1];
+    const studentId = parts[2];
     const hours = parseFloat(parts[parts.length - 1]);
-    const name = parts.slice(2, parts.length - 1).join(' ').trim();
+    const name = parts.slice(3, parts.length - 1).join(' ').trim();
+
+    // เช็คว่ารหัสคณะถูกต้องหรือไม่
+    if (!FACULTY_MAP[facultyCode]) {
+      return replyTextMsg(
+        event.replyToken,
+        '❌ รหัสคณะไม่ถูกต้อง!\nกรุณาใช้รหัสคณะดังนี้:\n01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n02 = คณะบริหารธุรกิจและศิลปศาสตร์\n03 = คณะวิศวกรรมศาสตร์'
+      );
+    }
+
+    const facultyName = FACULTY_MAP[facultyCode];
 
     if (!name) {
       return replyTextMsg(event.replyToken, '❌ ไม่พบชื่อ-นามสกุล กรุณาตรวจสอบรูปแบบอีกครั้ง');
@@ -402,11 +428,20 @@ async function handleEvent(event) {
     }
 
     try {
-      // ดึงรูปที่เพิ่งอัปโหลดล่าสุด (ถ้ามี)
+      // ดึงรูปชั่วคราว (ถ้ามี)
       const tempImg = await TempImage.findOneAndDelete({ userId });
       const imageUrl = tempImg ? tempImg.imageUrl : '';
 
-      const newRecord = new Volunteer({ userId, studentId, name, hours, imageUrl });
+      const newRecord = new Volunteer({ 
+        userId, 
+        facultyCode, 
+        facultyName, 
+        studentId, 
+        name, 
+        hours, 
+        imageUrl 
+      });
+
       await newRecord.save();
 
       const allRecords = await Volunteer.find({ studentId });
@@ -415,6 +450,7 @@ async function handleEvent(event) {
       let replyText = `✅ บันทึกชั่วโมงจิตอาสาสำเร็จ!\n\n` +
                         `👤 ชื่อ: ${name}\n` +
                         `🆔 รหัส: ${studentId}\n` +
+                        `🏛 คณะ: ${facultyName}\n` +
                         `⏱ บันทึกเพิ่ม: ${hours} ชั่วโมง\n` +
                         `📊 ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
 
@@ -437,8 +473,12 @@ async function handleEvent(event) {
                    `📌 ขั้นตอนการใช้งาน:\n` +
                    `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
                    `2️⃣ พิมพ์บันทึกชั่วโมงตามรูปแบบ:\n` +
-                   `บันทึก <รหัส> <ชื่อ-นามสกุล> <ชั่วโมง>\n` +
-                   `ตัวอย่าง: บันทึก 6501234567 สมชาย ใจดี 4\n\n` +
+                   `บันทึก <รหัสคณะ> <รหัสประจำตัว> <ชื่อ-นามสกุล> <ชั่วโมง>\n\n` +
+                   `🏛 รหัสคณะ:\n` +
+                   `01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n` +
+                   `02 = คณะบริหารธุรกิจและศิลปศาสตร์\n` +
+                   `03 = คณะวิศวกรรมศาสตร์\n\n` +
+                   `💡 ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4\n\n` +
                    `🔍 เช็คชั่วโมงสะสม:\n` +
                    `พิมพ์: เช็คชั่วโมง <รหัสนักศึกษา>`;
 
