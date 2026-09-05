@@ -11,7 +11,7 @@ const path = require('path');
 const ExcelJS = require('exceljs');
 const cloudinary = require('cloudinary').v2;
 
-// 🔑 ตั้งค่า Cloudinary (นำค่าจากหน้า Dashboard ของ Cloudinary มาใส่ หรือใส่ใน Environment Variable บน Render)
+// 🔑 ตั้งค่า Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'ao9yrwpm',
   api_key: process.env.CLOUDINARY_API_KEY || '999874921286948',
@@ -32,12 +32,12 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-// Messaging API Client
+// Messaging API Client (สำหรับส่งข้อความ)
 const client = line.messagingApi 
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: config.channelAccessToken })
   : new line.Client(config);
 
-// Messaging API Blob Client
+// Messaging API Blob Client (สำหรับดึงไฟล์รูปภาพใน SDK v8+)
 const blobClient = line.messagingApi 
   ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
   : client;
@@ -62,23 +62,23 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // Schema สำหรับเก็บข้อมูลจิตอาสา
 const volunteerSchema = new mongoose.Schema({
-  userId: String,
-  facultyCode: String,
-  facultyName: String,
+  userId: String,      // LINE User ID
+  facultyCode: String, // รหัสคณะ (01, 02, 03)
+  facultyName: String, // ชื่อคณะ
   studentId: String,
   name: { type: String, default: 'ไม่ระบุชื่อ' },
   hours: Number,
-  imageUrl: { type: String, default: '' },
+  imageUrl: { type: String, default: '' }, // ลิงก์รูปภาพหลักฐาน
   date: { type: Date, default: Date.now }
 });
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
-// Schema สำหรับเก็บรูปภาพชั่วคราว
+// Schema สำหรับเก็บรูปภาพชั่วคราว รอคำสั่งพิมพ์บันทึก
 const tempImageSchema = new mongoose.Schema({
   userId: String,
   imageUrl: String,
-  createdAt: { type: Date, default: Date.now, expires: 1800 }
+  createdAt: { type: Date, default: Date.now, expires: 1800 } // ลบทิ้งอัตโนมัติใน 30 นาที
 });
 
 const TempImage = mongoose.model('TempImage', tempImageSchema);
@@ -87,6 +87,7 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // 👑 ADMIN DASHBOARD & API
 // ==========================================
 
+// 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
 app.get('/api/admin/records', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -96,6 +97,7 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
+// 2. Export Excel พร้อมข้อมูลคณะและลิงก์รูปภาพ
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -143,6 +145,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
+// 3. หน้า Admin Dashboard แสดงข้อมูล
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -206,6 +209,7 @@ app.get('/admin', (req, res) => {
         </div>
       </div>
 
+      <!-- Modal สำหรับขยายดูรูปภาพ -->
       <div class="modal fade" id="imageModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
           <div class="modal-content">
@@ -350,6 +354,7 @@ async function handleImageMessage(event) {
 }
 
 async function handleEvent(event) {
+  // หากเป็นข้อความรูปภาพ
   if (event.type === 'message' && event.message.type === 'image') {
     return handleImageMessage(event);
   }
@@ -440,7 +445,7 @@ async function handleEvent(event) {
         userId, 
         facultyCode, 
         facultyName, 
- studentId, 
+        studentId, 
         name, 
         hours, 
         imageUrl 
@@ -472,6 +477,7 @@ async function handleEvent(event) {
     }
   }
 
+  // 3. ข้อความแนะนำการใช้งาน
   const helpText = `👋 ยินดีต้อนรับสู่ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
                    `📌 ขั้นตอนการใช้งาน:\n` +
                    `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
