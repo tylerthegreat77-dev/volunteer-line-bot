@@ -10,7 +10,6 @@ const mongoose = require('mongoose');
 const path = require('path');
 const ExcelJS = require('exceljs');
 const axios = require('axios');
-const FormData = require('form-data');
 
 // 🔑 ใส่ API Key ของ ImgBB ที่นี่ หรือตั้งค่าใน Environment Variable บน Render
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '29a6620a3c2df4d494f53e43d5d94286';
@@ -309,7 +308,7 @@ function replyTextMsg(replyToken, text) {
   return client.replyMessage(replyToken, { type: 'text', text });
 }
 
-// ฟังก์ชันดึงไฟล์รูปจาก LINE แล้วอัปโหลดไป ImgBB
+// ฟังก์ชันดึงไฟล์รูปจาก LINE แล้วอัปโหลดไป ImgBB (แก้ไขเพื่อป้องกัน 400 Bad Request)
 async function handleImageMessage(event) {
   const userId = event.source.userId;
   const messageId = event.message.id;
@@ -324,12 +323,18 @@ async function handleImageMessage(event) {
     }
     const buffer = Buffer.concat(chunks);
 
-    // อัปโหลดไฟล์ขึ้น ImgBB
-    const formData = new FormData();
-    formData.append('image', buffer.toString('base64'));
+    // แปลงไฟล์เป็น Base64
+    const base64Image = buffer.toString('base64');
 
-    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, formData, {
-      headers: formData.getHeaders()
+    // ส่งข้อมูลไป ImgBB ในรูปแบบ URLSearchParams
+    const params = new URLSearchParams();
+    params.append('key', IMGBB_API_KEY.trim());
+    params.append('image', base64Image);
+
+    const response = await axios.post('https://api.imgbb.com/1/upload', params, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
     });
 
     const imageUrl = response.data.data.url;
@@ -347,7 +352,7 @@ async function handleImageMessage(event) {
     );
 
   } catch (error) {
-    console.error('Error handling image:', error);
+    console.error('Error handling image:', error.response ? error.response.data : error.message);
     return replyTextMsg(event.replyToken, '❌ ไม่สามารถบันทึกรูปภาพได้ กรุณาลองส่งใหม่อีกครั้ง');
   }
 }
