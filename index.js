@@ -9,10 +9,14 @@ const line = require('@line/bot-sdk');
 const mongoose = require('mongoose');
 const path = require('path');
 const ExcelJS = require('exceljs');
-const axios = require('axios');
+const cloudinary = require('cloudinary').v2;
 
-// 🔑 ใส่ API Key ของ ImgBB ที่นี่ หรือตั้งค่าใน Environment Variable บน Render
-const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '29a6620a3c2df4d494f53e43d5d94286';
+// 🔑 ตั้งค่า Cloudinary (นำค่าจากหน้า Dashboard ของ Cloudinary มาใส่ หรือใส่ใน Environment Variable บน Render)
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'ao9yrwpm',
+  api_key: process.env.CLOUDINARY_API_KEY || '999874921286948',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'Kyk5Mk1qlZ2uQ-Vt9QMJOtUr46M'
+});
 
 // 🏛️ ตารางแปลงรหัสคณะเป็นชื่อคณะ
 const FACULTY_MAP = {
@@ -28,12 +32,12 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-// Messaging API Client (สำหรับส่งข้อความ)
+// Messaging API Client
 const client = line.messagingApi 
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: config.channelAccessToken })
   : new line.Client(config);
 
-// Messaging API Blob Client (สำหรับดึงไฟล์รูปภาพใน SDK v8+)
+// Messaging API Blob Client
 const blobClient = line.messagingApi 
   ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
   : client;
@@ -58,23 +62,23 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // Schema สำหรับเก็บข้อมูลจิตอาสา
 const volunteerSchema = new mongoose.Schema({
-  userId: String,      // LINE User ID
-  facultyCode: String, // รหัสคณะ (01, 02, 03)
-  facultyName: String, // ชื่อคณะ
+  userId: String,
+  facultyCode: String,
+  facultyName: String,
   studentId: String,
   name: { type: String, default: 'ไม่ระบุชื่อ' },
   hours: Number,
-  imageUrl: { type: String, default: '' }, // ลิงก์รูปภาพหลักฐาน
+  imageUrl: { type: String, default: '' },
   date: { type: Date, default: Date.now }
 });
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
-// Schema สำหรับเก็บรูปภาพชั่วคราว รอคำสั่งพิมพ์บันทึก
+// Schema สำหรับเก็บรูปภาพชั่วคราว
 const tempImageSchema = new mongoose.Schema({
   userId: String,
   imageUrl: String,
-  createdAt: { type: Date, default: Date.now, expires: 1800 } // ลบทิ้งอัตโนมัติใน 30 นาที
+  createdAt: { type: Date, default: Date.now, expires: 1800 }
 });
 
 const TempImage = mongoose.model('TempImage', tempImageSchema);
@@ -83,7 +87,6 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // 👑 ADMIN DASHBOARD & API
 // ==========================================
 
-// 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
 app.get('/api/admin/records', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -93,7 +96,6 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. Export Excel พร้อมข้อมูลคณะและลิงก์รูปภาพ
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -141,7 +143,6 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้า Admin Dashboard แสดงข้อมูล
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -205,7 +206,6 @@ app.get('/admin', (req, res) => {
         </div>
       </div>
 
-      <!-- Modal สำหรับขยายดูรูปภาพ -->
       <div class="modal fade" id="imageModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
           <div class="modal-content">
@@ -308,13 +308,13 @@ function replyTextMsg(replyToken, text) {
   return client.replyMessage(replyToken, { type: 'text', text });
 }
 
-// ฟังก์ชันดึงไฟล์รูปจาก LINE แล้วอัปโหลดไป ImgBB (แก้ไขเพื่อป้องกัน 400 Bad Request)
+// ฟังก์ชันดึงไฟล์รูปจาก LINE แล้วอัปโหลดไป Cloudinary
 async function handleImageMessage(event) {
   const userId = event.source.userId;
   const messageId = event.message.id;
 
   try {
-    // ดึงไฟล์รูปภาพโดยใช้ blobClient
+    // ดึงไฟล์รูปภาพจาก LINE
     const stream = await blobClient.getMessageContent(messageId);
     
     const chunks = [];
@@ -322,22 +322,14 @@ async function handleImageMessage(event) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
+    const base64Image = `data:image/jpeg;base64,${buffer.toString('base64')}`;
 
-    // แปลงไฟล์เป็น Base64
-    const base64Image = buffer.toString('base64');
-
-    // ส่งข้อมูลไป ImgBB ในรูปแบบ URLSearchParams
-    const params = new URLSearchParams();
-    params.append('key', IMGBB_API_KEY.trim());
-    params.append('image', base64Image);
-
-    const response = await axios.post('https://api.imgbb.com/1/upload', params, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
+    // อัปโหลดไฟล์ขึ้น Cloudinary
+    const uploadResult = await cloudinary.uploader.upload(base64Image, {
+      folder: 'volunteer_proofs'
     });
 
-    const imageUrl = response.data.data.url;
+    const imageUrl = uploadResult.secure_url;
 
     // บันทึกลิงก์รูปไว้ชั่วคราว
     await TempImage.findOneAndUpdate(
@@ -352,13 +344,12 @@ async function handleImageMessage(event) {
     );
 
   } catch (error) {
-    console.error('Error handling image:', error.response ? error.response.data : error.message);
+    console.error('Error handling image with Cloudinary:', error);
     return replyTextMsg(event.replyToken, '❌ ไม่สามารถบันทึกรูปภาพได้ กรุณาลองส่งใหม่อีกครั้ง');
   }
 }
 
 async function handleEvent(event) {
-  // หากเป็นข้อความรูปภาพ
   if (event.type === 'message' && event.message.type === 'image') {
     return handleImageMessage(event);
   }
@@ -406,11 +397,10 @@ async function handleEvent(event) {
     }
   }
 
-  // 2. คำสั่ง "บันทึก" (รองรับรหัสคณะ)
+  // 2. คำสั่ง "บันทึก"
   if (userText.startsWith('บันทึก')) {
     const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
 
-    // โครงสร้างคำสั่ง: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <ชั่วโมง>
     if (parts.length < 5) {
       return replyTextMsg(
         event.replyToken, 
@@ -425,7 +415,6 @@ async function handleEvent(event) {
     const hours = parseFloat(parts[parts.length - 1]);
     const name = parts.slice(3, parts.length - 1).join(' ').trim();
 
-    // เช็คว่ารหัสคณะถูกต้องหรือไม่
     if (!FACULTY_MAP[facultyCode]) {
       return replyTextMsg(
         event.replyToken,
@@ -444,7 +433,6 @@ async function handleEvent(event) {
     }
 
     try {
-      // ดึงรูปชั่วคราว (ถ้ามี)
       const tempImg = await TempImage.findOneAndDelete({ userId });
       const imageUrl = tempImg ? tempImg.imageUrl : '';
 
@@ -452,7 +440,7 @@ async function handleEvent(event) {
         userId, 
         facultyCode, 
         facultyName, 
-        studentId, 
+ studentId, 
         name, 
         hours, 
         imageUrl 
@@ -484,7 +472,6 @@ async function handleEvent(event) {
     }
   }
 
-  // 3. ข้อความแนะนำการใช้งาน
   const helpText = `👋 ยินดีต้อนรับสู่ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
                    `📌 ขั้นตอนการใช้งาน:\n` +
                    `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
