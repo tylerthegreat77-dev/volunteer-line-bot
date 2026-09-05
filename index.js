@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-// บังคับให้ Node.js ใช้ Google DNS ในการค้นหาโดเมน (ช่วยแก้ ECONNREFUSED)
+// บังคับให้ Node.js ใช้ Google DNS ในการค้นหาโดเมน
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -9,6 +9,11 @@ const line = require('@line/bot-sdk');
 const mongoose = require('mongoose');
 const path = require('path');
 const ExcelJS = require('exceljs');
+const axios = require('axios');
+const FormData = require('form-data');
+
+// 🔑 ใส่ API Key ของ ImgBB ที่นี่
+const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '29a6620a3c2df4d494f53e43d5d94286';
 
 const app = express();
 
@@ -17,14 +22,11 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-// เช็กเวอร์ชันอัตโนมัติรองรับทั้ง SDK v7 และ v8+
 const client = line.messagingApi 
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: config.channelAccessToken })
   : new line.Client(config);
 
-// ==========================================
-// 1. LINE BOT WEBHOOK (ต้องวางก่อน express.json)
-// ==========================================
+// Webhook LINE
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -34,7 +36,6 @@ app.post('/webhook', line.middleware(config), (req, res) => {
     });
 });
 
-// Middleware สำหรับ Route ทั่วไป
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -43,21 +44,42 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!'))
   .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
 
-// Schema สำหรับเก็บข้อมูลจิตอาสา
+// Schema เพิ่มคอลัมน์ imageUrl และ userId สำหรับผูกรูป
 const volunteerSchema = new mongoose.Schema({
+  userId: String,      // LINE User ID
   studentId: String,
   name: { type: String, default: 'ไม่ระบุชื่อ' },
   hours: Number,
+  imageUrl: { type: String, default: '' }, // ลิงก์รูปภาพหลักฐาน
   date: { type: Date, default: Date.now }
 });
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
+// Schema เก็บรูปชั่วคราวรอคนพิมพ์บันทึก
+const tempImageSchema = new mongoose.Schema({
+  userId: String,
+  imageUrl: String,
+  createdAt: { type: Date, default: Date.now, expires: 1800 } // ลบทิ้งอัตโนมัติใน 30 นาที
+});
+
+const TempImage = mongoose.model('TempImage', tempImageSchema);
+
 // ==========================================
 // 👑 ADMIN DASHBOARD & API
 // ==========================================
 
-// 1. API ดึงข้อมูลสรุปชั่วโมงของนักศึกษาทุกคน (ดึงชื่อจริงล่าสุดที่ไม่ใช่ "ไม่ระบุชื่อ")
+// 1. API ดึงประวัติรายการจิตอาสาทั้งหมดพร้อมรูปภาพ
+app.get('/api/admin/records', async (req, res) => {
+  try {
+    const records = await Volunteer.find().sort({ date: -1 });
+    res.json({ success: true, data: records });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 2. API สรุปยอดนักศึกษา
 app.get('/api/admin/summary', async (req, res) => {
   try {
     const summary = await Volunteer.aggregate([
@@ -79,36 +101,22 @@ app.get('/api/admin/summary', async (req, res) => {
   }
 });
 
-// 2. Route สำหรับ Export ข้อมูลเป็นไฟล์ Excel (.xlsx)
+// 3. Export Excel พร้อมลิงก์รูปภาพ
 app.get('/admin/export-excel', async (req, res) => {
   try {
-    const summary = await Volunteer.aggregate([
-      { $sort: { date: -1 } },
-      {
-        $group: {
-          _id: "$studentId",
-          name: { $first: "$name" },
-          totalHours: { $sum: "$hours" },
-          recordCount: { $sum: 1 },
-          lastUpdated: { $max: "$date" }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
+    const records = await Volunteer.find().sort({ date: -1 });
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('รายงานชั่วโมงจิตอาสา');
 
-    // กำหนดหัวคอลัมน์
     worksheet.columns = [
       { header: 'รหัสนักศึกษา', key: 'studentId', width: 20 },
       { header: 'ชื่อ-นามสกุล', key: 'name', width: 25 },
-      { header: 'จำนวนครั้งที่บันทึก', key: 'recordCount', width: 18 },
-      { header: 'ชั่วโมงสะสมรวม', key: 'totalHours', width: 18 },
-      { header: 'บันทึกล่าสุดเมื่อ', key: 'lastUpdated', width: 22 }
+      { header: 'ชั่วโมงที่บันทึก', key: 'hours', width: 15 },
+      { header: 'วันที่บันทึก', key: 'date', width: 22 },
+      { header: 'ลิงก์รูปภาพหลักฐาน', key: 'imageUrl', width: 45 }
     ];
 
-    // จัดสไตล์หัวตาราง (ตัวหนา + พื้นหลังสีฟ้าอ่อน)
     worksheet.getRow(1).font = { bold: true };
     worksheet.getRow(1).fill = {
       type: 'pattern',
@@ -116,25 +124,18 @@ app.get('/admin/export-excel', async (req, res) => {
       fgColor: { argb: 'DDEBF7' }
     };
 
-    // เพิ่มข้อมูลนักศึกษาลงในไฟล์ Excel
-    summary.forEach(item => {
+    records.forEach(v => {
       worksheet.addRow({
-        studentId: item._id,
-        name: item.name || 'ไม่ระบุชื่อ',
-        recordCount: item.recordCount,
-        totalHours: item.totalHours,
-        lastUpdated: item.lastUpdated ? new Date(item.lastUpdated).toLocaleString('th-TH') : '-'
+        studentId: v.studentId,
+        name: v.name || 'ไม่ระบุชื่อ',
+        hours: v.hours,
+        date: v.date ? new Date(v.date).toLocaleString('th-TH') : '-',
+        imageUrl: v.imageUrl || 'ไม่มีรูปภาพ'
       });
     });
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    );
-    res.setHeader(
-      'Content-Disposition',
-      'attachment; filename=Volunteer_Hours_Report.xlsx'
-    );
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=Volunteer_Hours_Report.xlsx');
 
     await workbook.xlsx.write(res);
     res.end();
@@ -144,11 +145,11 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้าเว็บ Dashboard สำหรับอาจารย์ (เข้าผ่าน /admin)
+// 4. หน้า Admin Dashboard แสดงรูปภาพ
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
-     <html lang="th">
+    <html lang="th">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -158,31 +159,16 @@ app.get('/admin', (req, res) => {
       <style>
         body { font-family: 'Sarabun', sans-serif; background-color: #f8f9fa; }
         .card { border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .table-hover tbody tr:hover { background-color: #f1f3f5; }
+        .img-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1px solid #ddd; }
       </style>
     </head>
     <body>
       <div class="container py-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
-          <h2>📊 รายงานชั่วโมงจิตอาสา (สำหรับอาจารย์/เจ้าหน้าที่)</h2>
+          <h2>📊 รายงานชั่วโมงและหลักฐานจิตอาสา</h2>
           <div>
             <a href="/admin/export-excel" class="btn btn-success me-2">📊 ดาวน์โหลด Excel (.xlsx)</a>
             <button class="btn btn-outline-primary" onclick="loadData()">🔄 รีเฟรชข้อมูล</button>
-          </div>
-        </div>
-
-        <div class="row g-3 mb-4">
-          <div class="col-md-4">
-            <div class="card bg-primary text-white p-3">
-              <h5>จำนวนนักศึกษาทั้งหมด</h5>
-              <h3 id="totalStudents">0 คน</h3>
-            </div>
-          </div>
-          <div class="col-md-4">
-            <div class="card bg-success text-white p-3">
-              <h5>ชั่วโมงจิตอาสารวมทั้งหมด</h5>
-              <h3 id="grandTotalHours">0 ชั่วโมง</h3>
-            </div>
           </div>
         </div>
 
@@ -195,14 +181,14 @@ app.get('/admin', (req, res) => {
             <table class="table table-hover align-middle">
               <thead class="table-light">
                 <tr>
+                  <th>หลักฐานรูปภาพ</th>
                   <th>รหัสนักศึกษา</th>
                   <th>ชื่อ-นามสกุล</th>
-                  <th>จำนวนครั้งที่บันทึก</th>
-                  <th>ชั่วโมงสะสมรวม</th>
-                  <th>บันทึกล่าสุดเมื่อ</th>
+                  <th>ชั่วโมงที่บันทึก</th>
+                  <th>วันที่และเวลา</th>
                 </tr>
               </thead>
-              <tbody id="studentTableBody">
+              <tbody id="recordTableBody">
                 <tr><td colspan="5" class="text-center">กำลังโหลดข้อมูล...</td></tr>
               </tbody>
             </table>
@@ -210,16 +196,28 @@ app.get('/admin', (req, res) => {
         </div>
       </div>
 
+      <!-- Modal สำหรับขยายดูรูปภาพ -->
+      <div class="modal fade" id="imageModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-body text-center p-2">
+              <img id="modalImg" src="" class="img-fluid rounded" alt="รูปหลักฐาน">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
       <script>
-        let allData = [];
+        let allRecords = [];
 
         async function loadData() {
           try {
-            const res = await fetch('/api/admin/summary');
+            const res = await fetch('/api/admin/records');
             const result = await res.json();
             if (result.success) {
-              allData = result.data;
-              renderData(allData);
+              allRecords = result.data;
+              renderData(allRecords);
             }
           } catch (err) {
             alert('ไม่สามารถดึงข้อมูลได้');
@@ -227,41 +225,41 @@ app.get('/admin', (req, res) => {
         }
 
         function renderData(data) {
-          const tbody = document.getElementById('studentTableBody');
+          const tbody = document.getElementById('recordTableBody');
           tbody.innerHTML = '';
 
-          let grandTotal = 0;
-
           if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">ไม่พบข้อมูล</td></tr>';
-            document.getElementById('totalStudents').innerText = '0 คน';
-            document.getElementById('grandTotalHours').innerText = '0 ชั่วโมง';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">ไม่พบข้อมูลบันทึก</td></tr>';
             return;
           }
 
           data.forEach(item => {
-            grandTotal += item.totalHours;
-            const dateStr = new Date(item.lastUpdated).toLocaleString('th-TH');
-            
+            const dateStr = new Date(item.date).toLocaleString('th-TH');
+            const imgHtml = item.imageUrl 
+              ? \`<img src="\${item.imageUrl}" class="img-thumb" onclick="showModal('\${item.imageUrl}')">\`
+              : \`<span class="badge bg-secondary">ไม่มีรูป</span>\`;
+
             const tr = document.createElement('tr');
             tr.innerHTML = \`
-              <td><strong>\${item._id}</strong></td>
+              <td>\${imgHtml}</td>
+              <td><strong>\${item.studentId}</strong></td>
               <td>\${item.name || 'ไม่ระบุชื่อ'}</td>
-              <td><span class="badge bg-secondary">\${item.recordCount} ครั้ง</span></td>
-              <td><span class="badge bg-success fs-6">\${item.totalHours} ชม.</span></td>
+              <td><span class="badge bg-success fs-6">\${item.hours} ชม.</span></td>
               <td class="text-muted"><small>\${dateStr}</small></td>
             \`;
             tbody.appendChild(tr);
           });
+        }
 
-          document.getElementById('totalStudents').innerText = data.length + ' คน';
-          document.getElementById('grandTotalHours').innerText = grandTotal + ' ชั่วโมง';
+        function showModal(url) {
+          document.getElementById('modalImg').src = url;
+          new bootstrap.Modal(document.getElementById('imageModal')).show();
         }
 
         function filterTable() {
           const searchText = document.getElementById('searchInput').value.toLowerCase();
-          const filtered = allData.filter(item => 
-            item._id.toLowerCase().includes(searchText) || 
+          const filtered = allRecords.filter(item => 
+            item.studentId.toLowerCase().includes(searchText) || 
             (item.name && item.name.toLowerCase().includes(searchText))
           );
           renderData(filtered);
@@ -288,12 +286,66 @@ function replyTextMsg(replyToken, text) {
   return client.replyMessage(replyToken, { type: 'text', text });
 }
 
+// ฟังก์ชันดึงไฟล์รูปจาก LINE แล้วอัปโหลดไป ImgBB
+async function handleImageMessage(event) {
+  const userId = event.source.userId;
+  const messageId = event.message.id;
+
+  try {
+    // 1. ดึงไฟล์รูปจาก LINE
+    let stream;
+    if (client.getMessageContent) {
+      stream = await client.getMessageContent(messageId);
+    } else {
+      stream = await client.getMessageContent(messageId);
+    }
+
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+
+    // 2. ส่งไฟล์ขึ้น ImgBB
+    const formData = new FormData();
+    formData.append('image', buffer.toString('base64'));
+
+    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, formData, {
+      headers: formData.getHeaders()
+    });
+
+    const imageUrl = response.data.data.url;
+
+    // 3. บันทึกรูปไว้ชั่วคราว รอคนพิมพ์บันทึกชั่วโมง
+    await TempImage.findOneAndUpdate(
+      { userId },
+      { imageUrl, createdAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    return replyTextMsg(
+      event.replyToken,
+      '📷 ได้รับรูปภาพหลักฐานเรียบร้อยแล้วครับ!\n\nกรุณาพิมพ์บันทึกชั่วโมงต่อได้เลย เช่น:\nบันทึก 6501234567 สมชาย ใจดี 4'
+    );
+
+  } catch (error) {
+    console.error('Error handling image:', error);
+    return replyTextMsg(event.replyToken, '❌ ไม่สามารถบันทึกรูปภาพได้ กรุณาลองส่งใหม่อีกครั้ง');
+  }
+}
+
 async function handleEvent(event) {
+  // หากนักศึกษาส่งรูปภาพเข้ามา
+  if (event.type === 'message' && event.message.type === 'image') {
+    return handleImageMessage(event);
+  }
+
   if (event.type !== 'message' || event.message.type !== 'text') {
     return Promise.resolve(null);
   }
 
   const userText = event.message.text.trim();
+  const userId = event.source.userId;
 
   // 1. คำสั่ง "เช็คชั่วโมง"
   if (userText.startsWith('เช็คชั่วโมง')) {
@@ -312,8 +364,6 @@ async function handleEvent(event) {
       }
 
       const totalHours = records.reduce((sum, item) => sum + item.hours, 0);
-      
-      // ดึงชื่อจริงที่มีบันทึกไว้ในระบบ
       const validRecord = records.reverse().find(r => r.name && r.name !== 'ไม่ระบุชื่อ');
       const studentName = validRecord ? validRecord.name : (records[0].name || 'ไม่ระบุชื่อ');
 
@@ -352,17 +402,27 @@ async function handleEvent(event) {
     }
 
     try {
-      const newRecord = new Volunteer({ studentId, name, hours });
+      // ดึงรูปที่เพิ่งอัปโหลดล่าสุด (ถ้ามี)
+      const tempImg = await TempImage.findOneAndDelete({ userId });
+      const imageUrl = tempImg ? tempImg.imageUrl : '';
+
+      const newRecord = new Volunteer({ userId, studentId, name, hours, imageUrl });
       await newRecord.save();
 
       const allRecords = await Volunteer.find({ studentId });
       const totalHours = allRecords.reduce((sum, item) => sum + item.hours, 0);
 
-      const replyText = `✅ บันทึกชั่วโมงจิตอาสาสำเร็จ!\n\n` +
+      let replyText = `✅ บันทึกชั่วโมงจิตอาสาสำเร็จ!\n\n` +
                         `👤 ชื่อ: ${name}\n` +
                         `🆔 รหัส: ${studentId}\n` +
                         `⏱ บันทึกเพิ่ม: ${hours} ชั่วโมง\n` +
                         `📊 ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
+
+      if (imageUrl) {
+        replyText += `\n📷 แนบรูปภาพหลักฐานเรียบร้อยแล้ว`;
+      } else {
+        replyText += `\n⚠️ (บันทึกโดยไม่มีรูปภาพหลักฐาน)`;
+      }
 
       return replyTextMsg(event.replyToken, replyText);
 
@@ -374,13 +434,13 @@ async function handleEvent(event) {
 
   // 3. ข้อความแนะนำการใช้งาน
   const helpText = `👋 ยินดีต้อนรับสู่ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
-                   `📌 คำสั่งที่สามารถใช้งานได้:\n\n` +
-                   `1️⃣ บันทึกชั่วโมง:\n` +
-                   `พิมพ์: บันทึก <รหัส> <ชื่อ-นามสกุล> <ชั่วโมง>\n` +
+                   `📌 ขั้นตอนการใช้งาน:\n` +
+                   `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
+                   `2️⃣ พิมพ์บันทึกชั่วโมงตามรูปแบบ:\n` +
+                   `บันทึก <รหัส> <ชื่อ-นามสกุล> <ชั่วโมง>\n` +
                    `ตัวอย่าง: บันทึก 6501234567 สมชาย ใจดี 4\n\n` +
-                   `2️⃣ เช็คชั่วโมงสะสม:\n` +
-                   `พิมพ์: เช็คชั่วโมง <รหัสนักศึกษา>\n` +
-                   `ตัวอย่าง: เช็คชั่วโมง 6501234567`;
+                   `🔍 เช็คชั่วโมงสะสม:\n` +
+                   `พิมพ์: เช็คชั่วโมง <รหัสนักศึกษา>`;
 
   return replyTextMsg(event.replyToken, helpText);
 }
