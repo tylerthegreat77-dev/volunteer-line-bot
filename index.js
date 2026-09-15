@@ -60,7 +60,7 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!'))
   .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
 
-// Schema สำหรับเก็บข้อมูลจิตอาสา
+// Schema สำหรับเก็บข้อมูลจิตอาสา (เพิ่ม activityName)
 const volunteerSchema = new mongoose.Schema({
   userId: String,      // LINE User ID
   facultyCode: String, // รหัสคณะ (01, 02, 03)
@@ -68,7 +68,8 @@ const volunteerSchema = new mongoose.Schema({
   studentId: String,
   name: { type: String, default: 'ไม่ระบุชื่อ' },
   hours: Number,
-  imageUrl: { type: String, default: '' }, // ลิงก์รูปภาพหลักฐาน
+  activityName: { type: String, default: 'ไม่ระบุกิจกรรม' }, // 👈 เพิ่มฟิลด์เก็บชื่อกิจกรรม
+  imageUrl: { type: String, default: '' },                   // ลิงก์รูปภาพหลักฐาน
   date: { type: Date, default: Date.now }
 });
 
@@ -97,7 +98,7 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. Export Excel พร้อมข้อมูลคณะและลิงก์รูปภาพ
+// 2. Export Excel พร้อมข้อมูลคณะ ชื่อกิจกรรม และลิงก์รูปภาพ
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -110,6 +111,7 @@ app.get('/admin/export-excel', async (req, res) => {
       { header: 'ชื่อคณะ', key: 'facultyName', width: 35 },
       { header: 'รหัสนักศึกษา', key: 'studentId', width: 20 },
       { header: 'ชื่อ-นามสกุล', key: 'name', width: 25 },
+      { header: 'ชื่อกิจกรรม', key: 'activityName', width: 30 }, // 👈 เพิ่มคอลัมน์ชื่อกิจกรรมใน Excel
       { header: 'ชั่วโมงที่บันทึก', key: 'hours', width: 15 },
       { header: 'วันที่บันทึก', key: 'date', width: 22 },
       { header: 'ลิงก์รูปภาพหลักฐาน', key: 'imageUrl', width: 45 }
@@ -128,6 +130,7 @@ app.get('/admin/export-excel', async (req, res) => {
         facultyName: v.facultyName || 'ไม่ระบุคณะ',
         studentId: v.studentId,
         name: v.name || 'ไม่ระบุชื่อ',
+        activityName: v.activityName || 'ไม่ระบุกิจกรรม', // 👈 ใส่ข้อมูลชื่อกิจกรรม
         hours: v.hours,
         date: v.date ? new Date(v.date).toLocaleString('th-TH') : '-',
         imageUrl: v.imageUrl || 'ไม่มีรูปภาพ'
@@ -175,7 +178,7 @@ app.get('/admin', (req, res) => {
         <div class="card mb-4 p-3">
           <div class="row g-2">
             <div class="col-md-8">
-              <input type="text" id="searchInput" class="form-control" placeholder="🔍 ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล หรือ คณะ..." onkeyup="filterTable()">
+              <input type="text" id="searchInput" class="form-control" placeholder="🔍 ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล, คณะ หรือชื่อกิจกรรม..." onkeyup="filterTable()">
             </div>
             <div class="col-md-4">
               <select id="facultyFilter" class="form-select" onchange="filterTable()">
@@ -197,12 +200,13 @@ app.get('/admin', (req, res) => {
                   <th>คณะ</th>
                   <th>รหัสนักศึกษา</th>
                   <th>ชื่อ-นามสกุล</th>
+                  <th>ชื่อกิจกรรม</th>
                   <th>ชั่วโมงที่บันทึก</th>
                   <th>วันที่และเวลา</th>
                 </tr>
               </thead>
               <tbody id="recordTableBody">
-                <tr><td colspan="6" class="text-center">กำลังโหลดข้อมูล...</td></tr>
+                <tr><td colspan="7" class="text-center">กำลังโหลดข้อมูล...</td></tr>
               </tbody>
             </table>
           </div>
@@ -242,7 +246,7 @@ app.get('/admin', (req, res) => {
           tbody.innerHTML = '';
 
           if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center">ไม่พบข้อมูลบันทึก</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center">ไม่พบข้อมูลบันทึก</td></tr>';
             return;
           }
 
@@ -262,6 +266,7 @@ app.get('/admin', (req, res) => {
               <td>\${facultyBadge}</td>
               <td><strong>\${item.studentId}</strong></td>
               <td>\${item.name || 'ไม่ระบุชื่อ'}</td>
+              <td>\${item.activityName || 'ไม่ระบุกิจกรรม'}</td>
               <td><span class="badge bg-success fs-6">\${item.hours} ชม.</span></td>
               <td class="text-muted"><small>\${dateStr}</small></td>
             \`;
@@ -281,7 +286,8 @@ app.get('/admin', (req, res) => {
           const filtered = allRecords.filter(item => {
             const matchSearch = item.studentId.toLowerCase().includes(searchText) || 
                                 (item.name && item.name.toLowerCase().includes(searchText)) ||
-                                (item.facultyName && item.facultyName.toLowerCase().includes(searchText));
+                                (item.facultyName && item.facultyName.toLowerCase().includes(searchText)) ||
+                                (item.activityName && item.activityName.toLowerCase().includes(searchText));
             
             const matchFaculty = selectedFaculty === '' || item.facultyCode === selectedFaculty;
 
@@ -344,7 +350,7 @@ async function handleImageMessage(event) {
 
     return replyTextMsg(
       event.replyToken,
-      '📷 ได้รับรูปภาพหลักฐานเรียบร้อยแล้วครับ!\n\nกรุณาพิมพ์บันทึกชั่วโมงต่อได้เลย เช่น:\nบันทึก 01 6501234567 สมชาย ใจดี 4'
+      '📷 ได้รับรูปภาพหลักฐานเรียบร้อยแล้วครับ!\n\nกรุณาพิมพ์บันทึกชั่วโมงต่อได้เลย เช่น:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
     );
 
   } catch (error) {
@@ -406,19 +412,38 @@ async function handleEvent(event) {
   if (userText.startsWith('บันทึก')) {
     const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
 
-    if (parts.length < 5) {
+    // ต้องมีอย่างน้อย 6 ส่วน: คำว่าบันทึก + รหัสคณะ + รหัสนักศึกษา + ชื่อ + ชั่วโมง + ชื่อกิจกรรม
+    if (parts.length < 6) {
       return replyTextMsg(
         event.replyToken, 
-        '❌ รูปแบบคำสั่งไม่ถูกต้อง!\nกรุณาพิมพ์: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <จำนวนชั่วโมง>\n\n' +
+        '❌ รูปแบบคำสั่งไม่ถูกต้อง!\nกรุณาพิมพ์: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <จำนวนชั่วโมง> <ชื่อกิจกรรม>\n\n' +
         '🏛 รหัสคณะ:\n01 = วิทยาศาสตร์และเทคโนโลยีการเกษตร\n02 = บริหารธุรกิจและศิลปศาสตร์\n03 = วิศวกรรมศาสตร์\n\n' +
-        'ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4'
+        'ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
       );
     }
 
     const facultyCode = parts[1];
     const studentId = parts[2];
-    const hours = parseFloat(parts[parts.length - 1]);
-    const name = parts.slice(3, parts.length - 1).join(' ').trim();
+    
+    // ค้นหาตำแหน่งของ "จำนวนชั่วโมง" ซึ่งเป็นตัวเลขตัวแรกหลังจากชื่อ-นามสกุล
+    let hoursIndex = -1;
+    for (let i = 3; i < parts.length - 1; i++) {
+      if (!isNaN(parts[i])) {
+        hoursIndex = i;
+        break;
+      }
+    }
+
+    if (hoursIndex === -1) {
+      return replyTextMsg(
+        event.replyToken, 
+        '❌ ไม่พบจำนวนชั่วโมงที่เป็นตัวเลข หรือพิมพ์รูปแบบไม่ถูกต้อง\nตัวอย่างที่ถูกต้อง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
+      );
+    }
+
+    const name = parts.slice(3, hoursIndex).join(' ').trim();
+    const hours = parseFloat(parts[hoursIndex]);
+    const activityName = parts.slice(hoursIndex + 1).join(' ').trim(); // อ่านข้อความตั้งแต่หลังชั่วโมงมารวมกันเป็นชื่อกิจกรรม
 
     if (!FACULTY_MAP[facultyCode]) {
       return replyTextMsg(
@@ -437,6 +462,10 @@ async function handleEvent(event) {
       return replyTextMsg(event.replyToken, '❌ จำนวนชั่วโมงต้องเป็นตัวเลขที่มากกว่า 0');
     }
 
+    if (!activityName) {
+      return replyTextMsg(event.replyToken, '❌ กรุณาระบุชื่อกิจกรรมต่อท้ายด้วยครับ');
+    }
+
     try {
       const tempImg = await TempImage.findOneAndDelete({ userId });
       const imageUrl = tempImg ? tempImg.imageUrl : '';
@@ -448,6 +477,7 @@ async function handleEvent(event) {
         studentId, 
         name, 
         hours, 
+        activityName, // 👈 บันทึกชื่อกิจกรรมลงฐานข้อมูล
         imageUrl 
       });
 
@@ -460,6 +490,7 @@ async function handleEvent(event) {
                         `👤 ชื่อ: ${name}\n` +
                         `🆔 รหัส: ${studentId}\n` +
                         `🏛 คณะ: ${facultyName}\n` +
+                        `📌 กิจกรรม: ${activityName}\n` + // 👈 แสดงชื่อกิจกรรมที่บันทึก
                         `⏱ บันทึกเพิ่ม: ${hours} ชั่วโมง\n` +
                         `📊 ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
 
@@ -482,12 +513,12 @@ async function handleEvent(event) {
                    `📌 ขั้นตอนการใช้งาน:\n` +
                    `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
                    `2️⃣ พิมพ์บันทึกชั่วโมงตามรูปแบบ:\n` +
-                   `บันทึก <รหัสคณะ> <รหัสประจำตัว> <ชื่อ-นามสกุล> <ชั่วโมง>\n\n` +
+                   `บันทึก <รหัสคณะ> <รหัสประจำตัว> <ชื่อ-นามสกุล> <ชั่วโมง> <ชื่อกิจกรรม>\n\n` +
                    `🏛 รหัสคณะ:\n` +
                    `01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n` +
                    `02 = คณะบริหารธุรกิจและศิลปศาสตร์\n` +
                    `03 = คณะวิศวกรรมศาสตร์\n\n` +
-                   `💡 ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4\n\n` +
+                   `💡 ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n` +
                    `🔍 เช็คชั่วโมงสะสม:\n` +
                    `พิมพ์: เช็คชั่วโมง <รหัสนักศึกษา>`;
 
