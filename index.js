@@ -60,26 +60,26 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!'))
   .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
 
-// Schema สำหรับเก็บข้อมูลจิตอาสา (เพิ่ม activityName)
+// Schema สำหรับเก็บข้อมูลจิตอาสา
 const volunteerSchema = new mongoose.Schema({
-  userId: String,      // LINE User ID
-  facultyCode: String, // รหัสคณะ (01, 02, 03)
-  facultyName: String, // ชื่อคณะ
+  userId: String,
+  facultyCode: String,
+  facultyName: String,
   studentId: String,
   name: { type: String, default: 'ไม่ระบุชื่อ' },
   hours: Number,
-  activityName: { type: String, default: 'ไม่ระบุกิจกรรม' }, // 👈 เพิ่มฟิลด์เก็บชื่อกิจกรรม
-  imageUrl: { type: String, default: '' },                   // ลิงก์รูปภาพหลักฐาน
+  activityName: { type: String, default: 'ไม่ระบุกิจกรรม' },
+  imageUrl: { type: String, default: '' },
   date: { type: Date, default: Date.now }
 });
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
-// Schema สำหรับเก็บรูปภาพชั่วคราว รอคำสั่งพิมพ์บันทึก
+// Schema สำหรับเก็บรูปภาพชั่วคราว
 const tempImageSchema = new mongoose.Schema({
   userId: String,
   imageUrl: String,
-  createdAt: { type: Date, default: Date.now, expires: 1800 } // ลบทิ้งอัตโนมัติใน 30 นาที
+  createdAt: { type: Date, default: Date.now, expires: 1800 }
 });
 
 const TempImage = mongoose.model('TempImage', tempImageSchema);
@@ -98,7 +98,7 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. Export Excel พร้อมข้อมูลคณะ ชื่อกิจกรรม และลิงก์รูปภาพ
+// 2. Export Excel
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -111,7 +111,7 @@ app.get('/admin/export-excel', async (req, res) => {
       { header: 'ชื่อคณะ', key: 'facultyName', width: 35 },
       { header: 'รหัสนักศึกษา', key: 'studentId', width: 20 },
       { header: 'ชื่อ-นามสกุล', key: 'name', width: 25 },
-      { header: 'ชื่อกิจกรรม', key: 'activityName', width: 30 }, // 👈 เพิ่มคอลัมน์ชื่อกิจกรรมใน Excel
+      { header: 'ชื่อกิจกรรม', key: 'activityName', width: 30 },
       { header: 'ชั่วโมงที่บันทึก', key: 'hours', width: 15 },
       { header: 'วันที่บันทึก', key: 'date', width: 22 },
       { header: 'ลิงก์รูปภาพหลักฐาน', key: 'imageUrl', width: 45 }
@@ -130,7 +130,7 @@ app.get('/admin/export-excel', async (req, res) => {
         facultyName: v.facultyName || 'ไม่ระบุคณะ',
         studentId: v.studentId,
         name: v.name || 'ไม่ระบุชื่อ',
-        activityName: v.activityName || 'ไม่ระบุกิจกรรม', // 👈 ใส่ข้อมูลชื่อกิจกรรม
+        activityName: v.activityName || 'ไม่ระบุกิจกรรม',
         hours: v.hours,
         date: v.date ? new Date(v.date).toLocaleString('th-TH') : '-',
         imageUrl: v.imageUrl || 'ไม่มีรูปภาพ'
@@ -148,7 +148,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้า Admin Dashboard แสดงข้อมูล
+// 3. หน้า Admin Dashboard สไตล์ Modern UI
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -156,33 +156,204 @@ app.get('/admin', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>ระบบจัดการชั่วโมงจิตอาสา - Admin</title>
-      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-      <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap" rel="stylesheet">
+      <title>Volunteer Admin Dashboard</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+      <script src="https://unpkg.com/lucide@latest"></script>
       <style>
-        body { font-family: 'Sarabun', sans-serif; background-color: #f8f9fa; }
-        .card { border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .img-thumb { width: 55px; height: 55px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1px solid #ddd; }
+        :root {
+          --bg-body: #f4f6f9;
+          --card-border-color: #e9ecef;
+          --primary-color: #4f46e5;
+          --primary-hover: #4338ca;
+        }
+
+        body {
+          font-family: 'Sarabun', 'Plus Jakarta Sans', sans-serif;
+          background-color: var(--bg-body);
+          color: #334155;
+        }
+
+        .navbar {
+          background: #ffffff;
+          border-bottom: 1px solid var(--card-border-color);
+        }
+
+        .card {
+          border: 1px solid var(--card-border-color);
+          border-radius: 16px;
+          box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+          transition: all 0.2s ease;
+        }
+
+        .stat-card {
+          background: #ffffff;
+        }
+
+        .stat-icon {
+          width: 48px;
+          height: 48px;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .table-card {
+          background: #ffffff;
+          overflow: hidden;
+        }
+
+        .table > :not(caption) > * > * {
+          padding: 1rem 1.25rem;
+          border-bottom-color: #f1f5f9;
+        }
+
+        .table thead th {
+          font-size: 0.8rem;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: #64748b;
+          font-weight: 600;
+          background-color: #f8fafc;
+        }
+
+        .img-thumb {
+          width: 44px;
+          height: 44px;
+          object-fit: cover;
+          border-radius: 10px;
+          cursor: pointer;
+          border: 1px solid #e2e8f0;
+          transition: transform 0.2s ease;
+        }
+
+        .img-thumb:hover {
+          transform: scale(1.08);
+        }
+
+        .badge-faculty {
+          font-size: 0.75rem;
+          padding: 0.35em 0.65em;
+          border-radius: 6px;
+          font-weight: 500;
+        }
+
+        .badge-hours {
+          background-color: #ecfdf5;
+          color: #047857;
+          border: 1px solid #a7f3d0;
+          font-weight: 600;
+          padding: 0.4em 0.8em;
+          border-radius: 20px;
+        }
+
+        .search-box .form-control, .search-box .form-select {
+          border-radius: 10px;
+          border: 1px solid #cbd5e1;
+          padding: 0.6rem 1rem;
+        }
+
+        .search-box .form-control:focus, .search-box .form-select:focus {
+          border-color: var(--primary-color);
+          box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+        }
+
+        .btn-custom-primary {
+          background-color: var(--primary-color);
+          color: white;
+          border-radius: 10px;
+          padding: 0.6rem 1.2rem;
+          font-weight: 500;
+        }
+
+        .btn-custom-primary:hover {
+          background-color: var(--primary-hover);
+          color: white;
+        }
       </style>
     </head>
     <body>
+
+      <!-- Navbar -->
+      <nav class="navbar navbar-expand-lg sticky-top py-3">
+        <div class="container-fluid px-4">
+          <a class="navbar-brand d-flex align-items-center gap-2 fw-bold text-dark" href="#">
+            <div class="bg-primary text-white p-2 rounded-3 d-flex align-items-center justify-content-center" style="width:36px; height:36px;">
+              <i data-lucide="heart-handshake" style="width:20px;"></i>
+            </div>
+            <span>Volunteer System Admin</span>
+          </a>
+          <div class="d-flex gap-2">
+            <a href="/admin/export-excel" class="btn btn-outline-success d-flex align-items-center gap-2" style="border-radius:10px;">
+              <i data-lucide="file-spreadsheet" style="width:18px;"></i> Export Excel
+            </a>
+            <button class="btn btn-custom-primary d-flex align-items-center gap-2" onclick="loadData()">
+              <i data-lucide="refresh-cw" style="width:18px;"></i> รีเฟรช
+            </button>
+          </div>
+        </div>
+      </nav>
+
       <div class="container-fluid px-4 py-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-          <h2>📊 รายงานชั่วโมงและหลักฐานจิตอาสา</h2>
-          <div>
-            <a href="/admin/export-excel" class="btn btn-success me-2">📊 ดาวน์โหลด Excel (.xlsx)</a>
-            <button class="btn btn-outline-primary" onclick="loadData()">🔄 รีเฟรชข้อมูล</button>
+        
+        <!-- Stat Cards Summary -->
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-md-4">
+            <div class="card stat-card p-3">
+              <div class="d-flex align-items-center justify-content-between">
+                <div>
+                  <div class="text-muted small fw-medium mb-1">จำนวนการบันทึกทั้งหมด</div>
+                  <h3 class="fw-bold mb-0" id="statCount">0</h3>
+                </div>
+                <div class="stat-icon bg-primary-subtle text-primary">
+                  <i data-lucide="clipboard-list"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="card stat-card p-3">
+              <div class="d-flex align-items-center justify-content-between">
+                <div>
+                  <div class="text-muted small fw-medium mb-1">ชั่วโมงสะสมรวมทั้งหมด</div>
+                  <h3 class="fw-bold mb-0 text-success" id="statHours">0 <small class="fs-6">ชม.</small></h3>
+                </div>
+                <div class="stat-icon bg-success-subtle text-success">
+                  <i data-lucide="clock"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="card stat-card p-3">
+              <div class="d-flex align-items-center justify-content-between">
+                <div>
+                  <div class="text-muted small fw-medium mb-1">นักศึกษาที่เข้าร่วม</div>
+                  <h3 class="fw-bold mb-0 text-indigo" id="statStudents">0 <small class="fs-6">คน</small></h3>
+                </div>
+                <div class="stat-icon bg-warning-subtle text-warning">
+                  <i data-lucide="users"></i>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="card mb-4 p-3">
-          <div class="row g-2">
-            <div class="col-md-8">
-              <input type="text" id="searchInput" class="form-control" placeholder="🔍 ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล, คณะ หรือชื่อกิจกรรม..." onkeyup="filterTable()">
+        <!-- Filter & Search Box -->
+        <div class="card p-3 mb-4 search-box">
+          <div class="row g-3">
+            <div class="col-12 col-md-8">
+              <div class="input-group">
+                <span class="input-group-text bg-white border-end-0 pe-0" style="border-radius: 10px 0 0 10px; border-color: #cbd5e1;">
+                  <i data-lucide="search" class="text-muted" style="width:18px;"></i>
+                </span>
+                <input type="text" id="searchInput" class="form-control border-start-0" style="border-radius: 0 10px 10px 0;" placeholder="ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล หรือกิจกรรม..." onkeyup="filterTable()">
+              </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-12 col-md-4">
               <select id="facultyFilter" class="form-select" onchange="filterTable()">
-                <option value="">🏛️ ทุกคณะ</option>
+                <option value="">🏛️ แสดงทุกคณะ</option>
                 <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
                 <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
                 <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
@@ -191,40 +362,41 @@ app.get('/admin', (req, res) => {
           </div>
         </div>
 
-        <div class="card p-3">
+        <!-- Data Table -->
+        <div class="card table-card">
           <div class="table-responsive">
-            <table class="table table-hover align-middle">
-              <thead class="table-light">
+            <table class="table align-middle mb-0">
+              <thead>
                 <tr>
                   <th>หลักฐาน</th>
+                  <th>ข้อมูลนักศึกษา</th>
                   <th>คณะ</th>
-                  <th>รหัสนักศึกษา</th>
-                  <th>ชื่อ-นามสกุล</th>
                   <th>ชื่อกิจกรรม</th>
-                  <th>ชั่วโมงที่บันทึก</th>
-                  <th>วันที่และเวลา</th>
+                  <th>ชั่วโมง</th>
+                  <th>วันที่บันทึก</th>
                 </tr>
               </thead>
               <tbody id="recordTableBody">
-                <tr><td colspan="7" class="text-center">กำลังโหลดข้อมูล...</td></tr>
+                <tr><td colspan="6" class="text-center py-5 text-muted">กำลังโหลดข้อมูล...</td></tr>
               </tbody>
             </table>
           </div>
         </div>
+
       </div>
 
-      <!-- Modal สำหรับขยายดูรูปภาพ -->
+      <!-- Modal ขยายรูป -->
       <div class="modal fade" id="imageModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
-          <div class="modal-content">
-            <div class="modal-body text-center p-2">
-              <img id="modalImg" src="" class="img-fluid rounded" alt="รูปหลักฐาน">
+          <div class="modal-content border-0 bg-transparent">
+            <div class="modal-body text-center p-0">
+              <img id="modalImg" src="" class="img-fluid rounded-4 shadow-lg" alt="รูปหลักฐาน">
             </div>
           </div>
         </div>
       </div>
 
-      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
       <script>
         let allRecords = [];
 
@@ -234,6 +406,7 @@ app.get('/admin', (req, res) => {
             const result = await res.json();
             if (result.success) {
               allRecords = result.data;
+              updateStats(allRecords);
               renderData(allRecords);
             }
           } catch (err) {
@@ -241,37 +414,64 @@ app.get('/admin', (req, res) => {
           }
         }
 
+        function updateStats(data) {
+          document.getElementById('statCount').innerText = data.length.toLocaleString();
+          
+          const totalHours = data.reduce((sum, item) => sum + (item.hours || 0), 0);
+          document.getElementById('statHours').innerText = totalHours.toLocaleString();
+
+          const uniqueStudents = new Set(data.map(item => item.studentId)).size;
+          document.getElementById('statStudents').innerText = uniqueStudents.toLocaleString();
+        }
+
         function renderData(data) {
           const tbody = document.getElementById('recordTableBody');
           tbody.innerHTML = '';
 
           if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center">ไม่พบข้อมูลบันทึก</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted">ไม่พบข้อมูลบันทึก</td></tr>';
             return;
           }
 
-          data.forEach(item => {
-            const dateStr = new Date(item.date).toLocaleString('th-TH');
-            const imgHtml = item.imageUrl 
-              ? \`<img src="\${item.imageUrl}" class="img-thumb" onclick="showModal('\${item.imageUrl}')">\`
-              : \`<span class="badge bg-secondary">ไม่มีรูป</span>\`;
+          const facultyColors = {
+            '01': 'bg-success-subtle text-success border-success-subtle',
+            '02': 'bg-primary-subtle text-primary border-primary-subtle',
+            '03': 'bg-warning-subtle text-warning-emphasis border-warning-subtle'
+          };
 
+          data.forEach(item => {
+            const dateObj = new Date(item.date);
+            const dateStr = dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
+            const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+
+            const imgHtml = item.imageUrl 
+              ? \`<img src="\${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('\${item.imageUrl}')">\`
+              : \`<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>\`;
+
+            const facultyClass = facultyColors[item.facultyCode] || 'bg-light text-dark';
             const facultyBadge = item.facultyCode 
-              ? \`<span class="badge bg-info text-dark">[\${item.facultyCode}] \${item.facultyName || ''}</span>\`
-              : \`<span class="badge bg-light text-muted">ไม่ระบุ</span>\`;
+              ? \`<span class="badge badge-faculty border \${facultyClass}">[\${item.facultyCode}] \${item.facultyName || ''}</span>\`
+              : \`<span class="text-muted small">ไม่ระบุ</span>\`;
 
             const tr = document.createElement('tr');
             tr.innerHTML = \`
               <td>\${imgHtml}</td>
+              <td>
+                <div class="fw-bold text-dark">\${item.name || 'ไม่ระบุชื่อ'}</div>
+                <div class="text-muted small">🆔 \${item.studentId}</div>
+              </td>
               <td>\${facultyBadge}</td>
-              <td><strong>\${item.studentId}</strong></td>
-              <td>\${item.name || 'ไม่ระบุชื่อ'}</td>
-              <td>\${item.activityName || 'ไม่ระบุกิจกรรม'}</td>
-              <td><span class="badge bg-success fs-6">\${item.hours} ชม.</span></td>
-              <td class="text-muted"><small>\${dateStr}</small></td>
+              <td><div class="fw-medium text-dark">\${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
+              <td><span class="badge badge-hours">+\${item.hours} ชม.</span></td>
+              <td>
+                <div class="small fw-medium text-dark">\${dateStr}</div>
+                <div class="text-muted" style="font-size: 11px;">\${timeStr} น.</div>
+              </td>
             \`;
             tbody.appendChild(tr);
           });
+
+          lucide.createIcons();
         }
 
         function showModal(url) {
@@ -318,13 +518,11 @@ function replyTextMsg(replyToken, text) {
   return client.replyMessage(replyToken, { type: 'text', text });
 }
 
-// ฟังก์ชันดึงไฟล์รูปจาก LINE แล้วอัปโหลดไป Cloudinary
 async function handleImageMessage(event) {
   const userId = event.source.userId;
   const messageId = event.message.id;
 
   try {
-    // ดึงไฟล์รูปภาพจาก LINE
     const stream = await blobClient.getMessageContent(messageId);
     
     const chunks = [];
@@ -334,14 +532,12 @@ async function handleImageMessage(event) {
     const buffer = Buffer.concat(chunks);
     const base64Image = `data:image/jpeg;base64,${buffer.toString('base64')}`;
 
-    // อัปโหลดไฟล์ขึ้น Cloudinary
     const uploadResult = await cloudinary.uploader.upload(base64Image, {
       folder: 'volunteer_proofs'
     });
 
     const imageUrl = uploadResult.secure_url;
 
-    // บันทึกลิงก์รูปไว้ชั่วคราว
     await TempImage.findOneAndUpdate(
       { userId },
       { imageUrl, createdAt: new Date() },
@@ -360,7 +556,6 @@ async function handleImageMessage(event) {
 }
 
 async function handleEvent(event) {
-  // หากเป็นข้อความรูปภาพ
   if (event.type === 'message' && event.message.type === 'image') {
     return handleImageMessage(event);
   }
@@ -412,7 +607,6 @@ async function handleEvent(event) {
   if (userText.startsWith('บันทึก')) {
     const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
 
-    // ต้องมีอย่างน้อย 6 ส่วน: คำว่าบันทึก + รหัสคณะ + รหัสนักศึกษา + ชื่อ + ชั่วโมง + ชื่อกิจกรรม
     if (parts.length < 6) {
       return replyTextMsg(
         event.replyToken, 
@@ -424,8 +618,7 @@ async function handleEvent(event) {
 
     const facultyCode = parts[1];
     const studentId = parts[2];
-    
-    // ค้นหาตำแหน่งของ "จำนวนชั่วโมง" ซึ่งเป็นตัวเลขตัวแรกหลังจากชื่อ-นามสกุล
+
     let hoursIndex = -1;
     for (let i = 3; i < parts.length - 1; i++) {
       if (!isNaN(parts[i])) {
@@ -443,7 +636,7 @@ async function handleEvent(event) {
 
     const name = parts.slice(3, hoursIndex).join(' ').trim();
     const hours = parseFloat(parts[hoursIndex]);
-    const activityName = parts.slice(hoursIndex + 1).join(' ').trim(); // อ่านข้อความตั้งแต่หลังชั่วโมงมารวมกันเป็นชื่อกิจกรรม
+    const activityName = parts.slice(hoursIndex + 1).join(' ').trim();
 
     if (!FACULTY_MAP[facultyCode]) {
       return replyTextMsg(
@@ -477,7 +670,7 @@ async function handleEvent(event) {
         studentId, 
         name, 
         hours, 
-        activityName, // 👈 บันทึกชื่อกิจกรรมลงฐานข้อมูล
+        activityName, 
         imageUrl 
       });
 
@@ -490,7 +683,7 @@ async function handleEvent(event) {
                         `👤 ชื่อ: ${name}\n` +
                         `🆔 รหัส: ${studentId}\n` +
                         `🏛 คณะ: ${facultyName}\n` +
-                        `📌 กิจกรรม: ${activityName}\n` + // 👈 แสดงชื่อกิจกรรมที่บันทึก
+                        `📌 กิจกรรม: ${activityName}\n` +
                         `⏱ บันทึกเพิ่ม: ${hours} ชั่วโมง\n` +
                         `📊 ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
 
