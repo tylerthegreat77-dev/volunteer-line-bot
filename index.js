@@ -1789,218 +1789,170 @@ app.get('/admin', (req, res) => {
           }
         );
     }
-            function renderData(data){
+           function renderData(data) {
+  const tbody = document.getElementById('recordTableBody');
 
-      const tbody =
-        document.getElementById(
-          'recordTableBody'
-        );
+  if (!data.length) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" class="empty">
+          <i data-lucide="inbox" width="28"></i>
+          <div class="mt-2">
+            ไม่พบข้อมูลที่ตรงกับการค้นหา
+          </div>
+        </td>
+      </tr>
+    `;
 
-      if(!data.length){
+    document.getElementById('resultCount').textContent = '0 รายการ';
 
-        tbody.innerHTML = `
-          <tr>
-            <td colspan="7" class="empty">
-              <i data-lucide="inbox" width="28"></i>
-              <div class="mt-2">
-                ไม่พบข้อมูลที่ตรงกับการค้นหา
-              </div>
-            </td>
-          </tr>
-        `;
+    lucide.createIcons();
+    return;
+  }
 
-        document.getElementById(
-          'resultCount'
-        ).textContent = '0 รายการ';
+  tbody.innerHTML = data.map(item => {
+    const date = item.date
+      ? new Date(item.date).toLocaleDateString('th-TH', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+        })
+      : '-';
 
-        lucide.createIcons();
+    const image = item.imageUrl
+      ? `
+        <img
+          src="${esc(item.imageUrl)}"
+          class="proof"
+          onclick="openImage('${esc(item.imageUrl)}')"
+          title="คลิกเพื่อดูรูป"
+          alt="หลักฐาน"
+        >
+      `
+      : `
+        <span class="no-proof">
+          ไม่มีรูป
+        </span>
+      `;
 
-        return;
-      }
+    const faculty =
+      item.facultyName ||
+      FACULTIES[item.facultyCode] ||
+      'ไม่ระบุคณะ';
 
-      tbody.innerHTML =
-        data.map(item => {
+    return `
+      <tr
+        data-search="${esc([
+          item.studentId,
+          item.name,
+          item.facultyName,
+          item.facultyCode,
+          item.activityName
+        ].join(' '))}"
+        data-faculty="${esc(item.facultyCode || '')}"
+      >
 
-          const date =
-            item.date
-              ? new Date(item.date)
-                  .toLocaleDateString(
-                    'th-TH',
-                    {
-                      year:'numeric',
-                      month:'short',
-                      day:'numeric'
-                    }
-                  )
-              : '-';
+        <td>
+          ${image}
+        </td>
 
-          const image =
-            item.imageUrl
-              ? `
-                <img
-                  src="${esc(item.imageUrl)}"
-                  class="proof"
-                  onclick="openImage('${esc(item.imageUrl)}')"
-                  title="คลิกเพื่อดูรูป"
-                  alt="หลักฐาน"
-                >
-              `
-              : `
-                <span class="no-proof">
-                  ไม่มีรูป
-                </span>
-              `;
+        <td>
+          <div class="d-flex align-items-center gap-2">
 
-          const faculty =
-            item.facultyName ||
-            FACULTIES[item.facultyCode] ||
-            'ไม่ระบุคณะ';
+            <div class="avatar">
+              ${esc(initials(item.name))}
+            </div>
 
-          return `
-            <tr
-              data-search="${esc(
-                [
-                  item.studentId,
-                  item.name,
-                  item.facultyName,
-                  item.facultyCode,
-                  item.activityName
-                ].join(' ')
-              )}"
-              data-faculty="${esc(
-                item.facultyCode || ''
-              )}"
+            <button
+              class="student-btn"
+              onclick="openStudent('${esc(item.studentId || '')}')"
             >
+              <div class="student-name">
+                ${esc(item.name || 'ไม่ระบุชื่อ')}
+              </div>
 
-              <td>
-                ${image}
-              </td>
+              <div class="student-id">
+                ${esc(item.studentId || '-')}
+              </div>
+            </button>
 
-              <td>
+          </div>
+        </td>
 
-                <div class="d-flex align-items-center gap-2">
+        <td>
+          <span class="faculty-badge">
+            ${esc(faculty)}
+          </span>
+        </td>
 
-                  <div class="avatar">
-                    ${esc(
-                      initials(item.name)
-                    )}
-                  </div>
+        <td>
+          <div
+            style="
+              max-width:220px;
+              font-size:13px;
+              font-weight:600;
+            "
+          >
+            ${esc(item.activityName || 'ไม่ระบุกิจกรรม')}
+          </div>
+        </td>
 
-                  <button
-                    class="student-btn"
-                    onclick="openStudent('${esc(
-                      item.studentId || ''
-                    )}')"
-                  >
+        <td>
+          <span class="hours-badge">
+            ${Number(item.hours) || 0} ชม.
+          </span>
+        </td>
 
-                    <div class="student-name">
-                      ${esc(
-                        item.name ||
-                        'ไม่ระบุชื่อ'
-                      )}
-                    </div>
+        <td>
+          <span
+            style="
+              font-size:12px;
+              color:#687386;
+            "
+          >
+            ${date}
+          </span>
+        </td>
 
-                    <div class="student-id">
-                      ${esc(
-                        item.studentId ||
-                        '-'
-                      )}
-                    </div>
+        <td class="text-end">
+          <div
+            class="d-flex justify-content-end gap-1"
+          >
 
-                  </button>
+            <button
+              class="btn btn-smx btn-primary-soft"
+              onclick="openEdit('${esc(item._id)}')"
+              title="แก้ไข"
+            >
+              <i
+                data-lucide="pencil"
+                width="14"
+              ></i>
+            </button>
 
-                </div>
+            <button
+              class="btn btn-smx btn-danger-soft"
+              onclick="deleteRecord('${esc(item._id)}')"
+              title="ลบ"
+            >
+              <i
+                data-lucide="trash-2"
+                width="14"
+              ></i>
+            </button>
 
-              </td>
+          </div>
+        </td>
 
-              <td>
-                <span class="faculty-badge">
-                  ${esc(faculty)}
-                </span>
-              </td>
+      </tr>
+    `;
+  }).join('');
 
-              <td>
-                <div
-                  style="
-                    max-width:220px;
-                    font-size:13px;
-                    font-weight:600;
-                  "
-                >
-                  ${esc(
-                    item.activityName ||
-                    'ไม่ระบุกิจกรรม'
-                  )}
-                </div>
-              </td>
+  document.getElementById('resultCount').textContent =
+    `${data.length.toLocaleString()} รายการ`;
 
-              <td>
-                <span class="hours-badge">
-                  ${Number(item.hours) || 0} ชม.
-                </span>
-              </td>
-
-              <td>
-                <span
-                  style="
-                    font-size:12px;
-                    color:#687386;
-                  "
-                >
-                  ${date}
-                </span>
-              </td>
-
-              <td class="text-end">
-
-                <div
-                  class="d-flex justify-content-end gap-1"
-                >
-
-                  <button
-                    class="btn btn-smx btn-primary-soft"
-                    onclick="openEdit('${esc(
-                      item._id
-                    )}')"
-                    title="แก้ไข"
-                  >
-                    <i
-                      data-lucide="pencil"
-                      width="14"
-                    ></i>
-                  </button>
-
-                  <button
-                    class="btn btn-smx btn-danger-soft"
-                    onclick="deleteRecord('${esc(
-                      item._id
-                    )}')"
-                    title="ลบ"
-                  >
-                    <i
-                      data-lucide="trash-2"
-                      width="14"
-                    ></i>
-                  </button>
-
-                </div>
-
-              </td>
-
-            </tr>
-          `;
-
-        }).join('');
-
-      document.getElementById(
-        'resultCount'
-      ).textContent =
-        `${data.length.toLocaleString()} รายการ`;
-
-      lucide.createIcons();
-    }
-
-    function filterTable(){
+  lucide.createIcons();
+}
 
       const search =
         document.getElementById(
