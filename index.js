@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-// บังคับให้ Node.js ใช้ Google DNS (ช่วยแก้ปัญหา Resolve DNS บน Server)
+// บังคับให้ Node.js ใช้ Google DNS
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -42,7 +42,7 @@ const blobClient = line.messagingApi
   ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
   : client;
 
-// Webhook LINE (ต้องวางก่อน express.json middleware เพื่อให้ line.middleware ทำงานได้ถูกต้อง)
+// Webhook LINE
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -75,7 +75,7 @@ const volunteerSchema = new mongoose.Schema({
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
-// Schema สำหรับเก็บรูปภาพชั่วคราว (ลบอัตโนมัติใน 30 นาที)
+// Schema สำหรับเก็บรูปภาพชั่วคราว
 const tempImageSchema = new mongoose.Schema({
   userId: String,
   imageUrl: String,
@@ -445,29 +445,29 @@ app.get('/admin', (req, res) => {
             const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 
             const imgHtml = item.imageUrl 
-              ? \`<img src="\${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('\${item.imageUrl}')">\`
-              : \`<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>\`;
+              ? `<img src="${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('${item.imageUrl}')">`
+              : `<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>`;
 
             const facultyClass = facultyColors[item.facultyCode] || 'bg-light text-dark';
             const facultyBadge = item.facultyCode 
-              ? \`<span class="badge badge-faculty border \${facultyClass}">[\${item.facultyCode}] \${item.facultyName || ''}</span>\`
-              : \`<span class="text-muted small">ไม่ระบุ</span>\`;
+              ? `<span class="badge badge-faculty border ${facultyClass}">[${item.facultyCode}]${item.facultyName || ''}</span>`
+              : `<span class="text-muted small">ไม่ระบุ</span>`;
 
             const tr = document.createElement('tr');
-            tr.innerHTML = \`
-              <td>\${imgHtml}</td>
+            tr.innerHTML = `
+              <td>${imgHtml}</td>
               <td>
-                <div class="fw-bold text-dark">\${item.name || 'ไม่ระบุชื่อ'}</div>
-                <div class="text-muted small">🆔 \${item.studentId}</div>
+                <div class="fw-bold text-dark">${item.name || 'ไม่ระบุชื่อ'}</div>
+                <div class="text-muted small">🆔 ${item.studentId}</div>
               </td>
-              <td>\${facultyBadge}</td>
-              <td><div class="fw-medium text-dark">\${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
-              <td><span class="badge badge-hours">+\${item.hours} ชม.</span></td>
+              <td>${facultyBadge}</td>
+              <td><div class="fw-medium text-dark">${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
+              <td><span class="badge badge-hours">+${item.hours} ชม.</span></td>
               <td>
-                <div class="small fw-medium text-dark">\${dateStr}</div>
-                <div class="text-muted" style="font-size: 11px;">\${timeStr} น.</div>
+                <div class="small fw-medium text-dark">${dateStr}</div>
+                <div class="text-muted" style="font-size: 11px;">${timeStr} น.</div>
               </td>
-            \`;
+            `;
             tbody.appendChild(tr);
           });
 
@@ -701,7 +701,7 @@ async function handleEvent(event) {
     }
   }
 
-  // 3. ข้อความแนะนำการใช้งาน (สำหรับข้อความทั่วไปอื่นๆ)
+  // 3. ข้อความแนะนำการใช้งาน
   const helpText = `👋 ยินดีต้อนรับสู่ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
                    `📌 ขั้นตอนการใช้งาน:\n` +
                    `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
