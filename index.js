@@ -11,11 +11,11 @@ const path = require('path');
 const ExcelJS = require('exceljs');
 const cloudinary = require('cloudinary').v2;
 
-// 🔑 ตั้งค่า Cloudinary (ดึงจาก Environment Variables ทั้งหมดเพื่อความปลอดภัย)
+// 🔑 ตั้งค่า Cloudinary
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'ao9yrwpm',
+  api_key: process.env.CLOUDINARY_API_KEY || '999874921286948',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'Kyk5Mk1qlZ2uQ-Vt9QMJOtUr46M'
 });
 
 // 🏛️ ตารางแปลงรหัสคณะเป็นชื่อคณะ
@@ -99,7 +99,7 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. API แก้ไขข้อมูลรายการบันทึก
+// 2. API แก้ไขข้อมูลรายการบันทึก (เพิ่มใหม่)
 app.put('/api/admin/records/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -130,7 +130,7 @@ app.put('/api/admin/records/:id', async (req, res) => {
   }
 });
 
-// 3. API ลบรายการบันทึก
+// 3. API ลบรายการบันทึก (เพิ่มใหม่)
 app.delete('/api/admin/records/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -196,7 +196,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 5. หน้า Admin Dashboard สไตล์ Modern Pro UI
+// 5. หน้า Admin Dashboard สไตล์ Modern Pro UI + Visual Analytics + Complete CRUD
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -206,9 +206,11 @@ app.get('/admin', (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Volunteer Pro Admin Dashboard</title>
       
+      <!-- Typography & UI Frameworks -->
       <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
       <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
       <script src="https://unpkg.com/lucide@latest"></script>
+      <!-- Chart.js -->
       <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
       <style>
@@ -575,7 +577,7 @@ app.get('/admin', (req, res) => {
             }
           });
 
-          // 1. Bar Chart
+          // 1. Bar Chart (ชั่วโมงรวมแต่ละคณะ)
           const ctxBar = document.getElementById('facultyChart').getContext('2d');
           if (facultyChart) facultyChart.destroy();
           facultyChart = new Chart(ctxBar, {
@@ -597,7 +599,7 @@ app.get('/admin', (req, res) => {
             }
           });
 
-          // 2. Doughnut Chart
+          // 2. Doughnut Chart (สัดส่วนจำนวนครั้ง)
           const ctxDoughnut = document.getElementById('ratioChart').getContext('2d');
           if (ratioChart) ratioChart.destroy();
           ratioChart = new Chart(ctxDoughnut, {
@@ -848,59 +850,53 @@ async function handleEvent(event) {
       const studentName = validRecord ? validRecord.name : (records[0].name || 'ไม่ระบุชื่อ');
       const facultyName = validRecord ? (validRecord.facultyName || 'ไม่ระบุ') : 'ไม่ระบุ';
 
-      let replyText = `📊 สรุปชั่วโมงจิตอาสา\n\n` +
+      let detailsText = '';
+      records.forEach((r, idx) => {
+        const dateStr = r.date ? new Date(r.date).toLocaleDateString('th-TH') : '-';
+        detailsText += `\n${idx + 1}. ${r.activityName} (${r.hours} ชม.) - ${dateStr}`;
+      });
+
+      const replyText = `📊 สรุปชั่วโมงจิตอาสา\n\n` +
                         `👤 ชื่อ: ${studentName}\n` +
                         `🆔 รหัส: ${studentId}\n` +
                         `🏛️ คณะ: ${facultyName}\n` +
                         `⏱️ ชั่วโมงรวม: ${totalHours} ชั่วโมง\n` +
-                        `----------------------------------\n` +
-                        `📌 ประวัติกิจกรรมล่าสุด:\n`;
-
-      const recentRecords = records.slice(-3).reverse();
-      recentRecords.forEach((r, index) => {
-        const dateStr = new Date(r.date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
-        replyText += `${index + 1}. ${r.activityName} (+${r.hours} ชม.) [${dateStr}]\n`;
-      });
+                        `________________________\n` +
+                        `📜 ประวัติการบันทึก:${detailsText}`;
 
       return replyTextMsg(event.replyToken, replyText);
 
     } catch (error) {
-      console.error('Error checking hours:', error);
-      return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการดึงข้อมูลชั่วโมง');
+      console.error('Error fetching records:', error);
+      return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการดึงข้อมูล กรุณาลองใหม่อีกครั้ง');
     }
   }
 
   // 2. คำสั่ง "บันทึก"
-  // รูปแบบ: บันทึก [รหัสคณะ] [รหัสนักศึกษา] [ชื่อ-นามสกุล] [จำนวนชั่วโมง] [ชื่อกิจกรรม]
   if (userText.startsWith('บันทึก')) {
-    const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
+    // รูปแบบ: บันทึก [รหัสคณะ] [รหัสนักศึกษา] [ชื่อ-นามสกุล] [จำนวนชั่วโมง] [ชื่อกิจกรรม]
+    const match = userText.match(/^บันทึก\s+(\d{2})\s+(\d+)\s+(.+?)\s+(\d+(?:\.\d+)?)\s+(.+)$/);
 
-    if (parts.length < 6) {
+    if (!match) {
       return replyTextMsg(
         event.replyToken,
-        '❌ รูปแบบการบันทึกไม่ถูกต้อง!\n\nกรุณาพิมพ์ในรูปแบบ:\nบันทึก [รหัสคณะ] [รหัสนักศึกษา] [ชื่อ-นามสกุล] [จำนวนชั่วโมง] [ชื่อกิจกรรม]\n\nตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
+        '❌ รูปแบบคำสั่งไม่ถูกต้อง!\n\n💡 กรุณาใช้รูปแบบดังนี้:\n' +
+        'บันทึก [รหัสคณะ] [รหัสนักศึกษา] [ชื่อ-นามสกุล] [ชั่วโมง] [ชื่อกิจกรรม]\n\n' +
+        '📌 ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n' +
+        '🏛️ รหัสคณะ:\n01 = วท.เกษตร\n02 = บริหารธุรกิจฯ\n03 = วิศวะฯ'
       );
     }
 
-    const facultyCode = parts[1];
-    const studentId = parts[2];
-    
-    // หากชื่อ-นามสกุลถูกแยกด้วย space หลายคำ
-    const hoursIndex = parts.findIndex((p, idx) => idx > 2 && !isNaN(p));
-    if (hoursIndex === -1) {
-      return replyTextMsg(event.replyToken, '❌ กรุณาระบุจำนวนชั่วโมงให้เป็นตัวเลขครับ');
-    }
-
-    const name = parts.slice(3, hoursIndex).join(' ');
-    const hours = parseFloat(parts[hoursIndex]);
-    const activityName = parts.slice(hoursIndex + 1).join(' ');
+    const [, facultyCode, studentId, name, hoursStr, activityName] = match;
+    const hours = parseFloat(hoursStr);
     const facultyName = FACULTY_MAP[facultyCode] || 'ไม่ระบุคณะ';
 
     try {
-      // ค้นหารูปภาพหลักฐานชั่วคราวที่แนบมาก่อนหน้านี้ (ถ้ามี)
-      const tempImg = await TempImage.findOneAndDelete({ userId });
+      // ค้นหารูปภาพชั่วคราวของผู้ใช้
+      const tempImg = await TempImage.findOne({ userId });
       const imageUrl = tempImg ? tempImg.imageUrl : '';
 
+      // บันทึกลงฐานข้อมูล
       const newRecord = new Volunteer({
         userId,
         facultyCode,
@@ -909,51 +905,49 @@ async function handleEvent(event) {
         name,
         hours,
         activityName,
-        imageUrl
+        imageUrl,
+        date: new Date()
       });
 
       await newRecord.save();
 
-      let replyMsg = `✅ บันทึกกิจกรรมจิตอาสาสำเร็จ!\n\n` +
-                     `🏛️ คณะ: ${facultyName}\n` +
-                     `👤 ชื่อ: ${name}\n` +
-                     `🆔 รหัส: ${studentId}\n` +
-                     `📝 กิจกรรม: ${activityName}\n` +
-                     `⏱️ จำนวน: ${hours} ชั่วโมง`;
-
-      if (imageUrl) {
-        replyMsg += `\n🖼️ แนบรูปภาพหลักฐานเรียบร้อย`;
-      } else {
-        replyMsg += `\n⚠️ (ไม่ได้แนบรูปภาพหลักฐาน)`;
+      // ลบรูปภาพชั่วคราวหลังบันทึกเสร็จ
+      if (tempImg) {
+        await TempImage.deleteOne({ userId });
       }
 
-      return replyTextMsg(event.replyToken, replyMsg);
+      const imgNotice = imageUrl ? '📷 แนบรูปหลักฐานแล้ว' : '⚠️ ไม่มีรูปหลักฐาน';
+
+      const replyText = `✅ บันทึกชั่วโมงจิตอาสาสำเร็จ!\n\n` +
+                        `👤 ชื่อ: ${name}\n` +
+                        `🆔 รหัส: ${studentId}\n` +
+                        `🏛️ คณะ: ${facultyName}\n` +
+                        `📌 กิจกรรม: ${activityName}\n` +
+                        `⏱️ ชั่วโมง: +${hours} ชม.\n` +
+                        `🖼️ สถานะรูป: ${imgNotice}\n\n` +
+                        `ขอบคุณสำหรับการทำดีครับ! 🙏`;
+
+      return replyTextMsg(event.replyToken, replyText);
 
     } catch (error) {
-      console.error('Error saving volunteer record:', error);
+      console.error('Error saving record:', error);
       return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง');
     }
   }
 
-  // คำสั่งต้อนรับ / วิธีใช้งาน
-  if (userText === 'วิธีใช้งาน' || userText === 'ช่วยเหลือ') {
-    const helpMsg = `🤖 วิธีใช้งานระบบบันทึกจิตอาสา\n\n` +
-                    `1. ส่งรูปภาพหลักฐานกิจกรรมก่อน (ถ้ามี)\n` +
-                    `2. พิมพ์บันทึกชั่วโมง เช่น:\n` +
-                    `   บันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n` +
-                    `3. ตรวจสอบชั่วโมงสะสม พิมพ์:\n` +
-                    `   เช็คชั่วโมง 6501234567\n\n` +
-                    `🏛️ รหัสคณะ:\n` +
-                    `01 = วิทยาศาสตร์ฯ\n` +
-                    `02 = บริหารธุรกิจฯ\n` +
-                    `03 = วิศวกรรมศาสตร์`;
-    return replyTextMsg(event.replyToken, helpMsg);
-  }
+  // คำสั่งอื่นๆ / ความช่วยเหลือ
+  const helpText = `🤖 สวัสดีครับ! ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
+                   `📌 วิธีใช้งาน:\n` +
+                   `1️⃣ ส่งรูปภาพหลักฐานกิจกรรมก่อน (ถ้ามี)\n` +
+                   `2️⃣ พิมพ์บันทึกข้อมูล เช่น:\n` +
+                   `   บันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n` +
+                   `📊 ตรวจสอบชั่วโมง พิมพ์:\n` +
+                   `   เช็คชั่วโมง 6501234567`;
 
-  return Promise.resolve(null);
+  return replyTextMsg(event.replyToken, helpText);
 }
 
-// เริ่มต้นเปิด Server
+// ตั้งค่า Port และเริ่มรัน Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
