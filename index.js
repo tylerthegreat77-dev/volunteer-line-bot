@@ -445,29 +445,32 @@ app.get('/admin', (req, res) => {
             const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 
             const imgHtml = item.imageUrl 
-              ? `<img src="${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('${item.imageUrl}')">`
-              : `<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>`;
+              ? '<img src="' + item.imageUrl + '" class="img-thumb shadow-sm" onclick="showModal(\'' + item.imageUrl + '\')">'
+              : '<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>';
 
             const facultyClass = facultyColors[item.facultyCode] || 'bg-light text-dark';
             const facultyBadge = item.facultyCode 
-              ? `<span class="badge badge-faculty border ${facultyClass}">[${item.facultyCode}]${item.facultyName || ''}</span>`
-              : `<span class="text-muted small">ไม่ระบุ</span>`;
+              ? '<span class="badge badge-faculty border ' + facultyClass + '">[' + item.facultyCode + '] ' + (item.facultyName || '') + '</span>'
+              : '<span class="text-muted small">ไม่ระบุ</span>';
+
+            const nameStr = item.name || 'ไม่ระบุชื่อ';
+            const studentIdStr = item.studentId || '-';
+            const activityStr = item.activityName || 'ไม่ระบุกิจกรรม';
+            const hoursNum = item.hours || 0;
 
             const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>${imgHtml}</td>
-              <td>
-                <div class="fw-bold text-dark">${item.name || 'ไม่ระบุชื่อ'}</div>
-                <div class="text-muted small">🆔 ${item.studentId}</div>
-              </td>
-              <td>${facultyBadge}</td>
-              <td><div class="fw-medium text-dark">${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
-              <td><span class="badge badge-hours">+${item.hours} ชม.</span></td>
-              <td>
-                <div class="small fw-medium text-dark">${dateStr}</div>
-                <div class="text-muted" style="font-size: 11px;">${timeStr} น.</div>
-              </td>
-            `;
+            tr.innerHTML = '<td>' + imgHtml + '</td>' +
+              '<td>' +
+                '<div class="fw-bold text-dark">' + nameStr + '</div>' +
+                '<div class="text-muted small">🆔 ' + studentIdStr + '</div>' +
+              '</td>' +
+              '<td>' + facultyBadge + '</td>' +
+              '<td><div class="fw-medium text-dark">' + activityStr + '</div></td>' +
+              '<td><span class="badge badge-hours">+' + hoursNum + ' ชม.</span></td>' +
+              '<td>' +
+                '<div class="small fw-medium text-dark">' + dateStr + '</div>' +
+                '<div class="text-muted" style="font-size: 11px;">' + timeStr + ' น.</div>' +
+              '</td>';
             tbody.appendChild(tr);
           });
 
@@ -484,7 +487,7 @@ app.get('/admin', (req, res) => {
           const selectedFaculty = document.getElementById('facultyFilter').value;
 
           const filtered = allRecords.filter(item => {
-            const matchSearch = item.studentId.toLowerCase().includes(searchText) || 
+            const matchSearch = (item.studentId && item.studentId.toLowerCase().includes(searchText)) || 
                                 (item.name && item.name.toLowerCase().includes(searchText)) ||
                                 (item.facultyName && item.facultyName.toLowerCase().includes(searchText)) ||
                                 (item.activityName && item.activityName.toLowerCase().includes(searchText));
