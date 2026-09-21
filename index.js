@@ -32,12 +32,11 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-// Messaging API Client (สำหรับส่งข้อความ)
+// Messaging API Client
 const client = line.messagingApi 
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: config.channelAccessToken })
   : new line.Client(config);
 
-// Messaging API Blob Client (สำหรับดึงไฟล์รูปภาพใน SDK v8+)
 const blobClient = line.messagingApi 
   ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
   : client;
@@ -148,7 +147,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้า Admin Dashboard สไตล์ Modern UI
+// 3. หน้า Admin Dashboard (ดีไซน์ถอดแบบจากภาพที่ส่งมา)
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -156,233 +155,425 @@ app.get('/admin', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Volunteer Admin Dashboard</title>
+      <title>Volunteer Dashboard</title>
       <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
       <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
       <script src="https://unpkg.com/lucide@latest"></script>
       <style>
         :root {
-          --bg-body: #f4f6f9;
-          --card-border-color: #e9ecef;
-          --primary-color: #4f46e5;
-          --primary-hover: #4338ca;
+          --sidebar-bg: #636e88;
+          --sidebar-hover: #525c74;
+          --main-bg: #e2e7f0;
+          --card-bg: #ffffff;
+          --text-muted: #8c98a9;
+          --accent-blue: #0088ff;
+          --accent-orange: #ffaa00;
+          --accent-green: #00cc88;
+          --accent-purple: #aa00ff;
         }
 
         body {
           font-family: 'Sarabun', 'Plus Jakarta Sans', sans-serif;
-          background-color: var(--bg-body);
-          color: #334155;
+          background-color: var(--main-bg);
+          margin: 0;
+          padding: 0;
+          height: 100vh;
+          overflow-x: hidden;
         }
 
-        .navbar {
-          background: #ffffff;
-          border-bottom: 1px solid var(--card-border-color);
+        .dashboard-container {
+          display: flex;
+          min-height: 100vh;
         }
 
-        .card {
-          border: 1px solid var(--card-border-color);
-          border-radius: 16px;
-          box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+        /* Sidebar Styling */
+        .sidebar {
+          width: 240px;
+          background-color: var(--sidebar-bg);
+          color: #ffffff;
+          display: flex;
+          flex-direction: column;
+          padding: 24px 16px;
+          flex-shrink: 0;
+        }
+
+        .sidebar-brand {
+          font-weight: 700;
+          font-size: 1.25rem;
+          letter-spacing: 1px;
+          margin-bottom: 32px;
+          padding-left: 12px;
+        }
+
+        .nav-list {
+          list-style: none;
+          padding: 0;
+          margin: 0;
+        }
+
+        .nav-item {
+          margin-bottom: 8px;
+        }
+
+        .nav-link {
+          color: #d1d5db;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 10px 14px;
+          border-radius: 8px;
+          text-decoration: none;
+          font-size: 0.95rem;
           transition: all 0.2s ease;
         }
 
-        .stat-card {
-          background: #ffffff;
+        .nav-link:hover, .nav-link.active {
+          color: #ffffff;
+          background-color: var(--sidebar-hover);
         }
 
-        .stat-icon {
-          width: 48px;
-          height: 48px;
-          border-radius: 12px;
+        .nav-link.active {
+          color: #38bdf8;
+        }
+
+        .menu-divider {
+          font-size: 0.75rem;
+          color: #9ca3af;
+          margin: 24px 0 12px 12px;
+          text-transform: uppercase;
+        }
+
+        /* Main Content */
+        .main-wrapper {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow-y: auto;
+        }
+
+        /* Top Bar */
+        .top-bar {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px 32px;
+          background-color: transparent;
+        }
+
+        .search-container {
+          position: relative;
+          width: 280px;
+        }
+
+        .search-container input {
+          width: 100%;
+          padding: 8px 16px 8px 36px;
+          border-radius: 20px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          outline: none;
+          font-size: 0.85rem;
+        }
+
+        .search-container i {
+          position: absolute;
+          left: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: #94a3b8;
+          width: 16px;
+        }
+
+        .user-profile {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          color: #64748b;
+          font-size: 0.85rem;
+        }
+
+        .avatar {
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          background: #cbd5e1;
           display: flex;
           align-items: center;
           justify-content: center;
         }
 
-        .table-card {
-          background: #ffffff;
-          overflow: hidden;
+        /* Dashboard Grid Layout */
+        .dashboard-content {
+          padding: 0 32px 32px 32px;
         }
 
-        .table > :not(caption) > * > * {
-          padding: 1rem 1.25rem;
-          border-bottom-color: #f1f5f9;
+        .card-custom {
+          background: var(--card-bg);
+          border-radius: 12px;
+          padding: 20px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+          height: 100%;
         }
 
-        .table thead th {
+        .card-title-custom {
           font-size: 0.8rem;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          color: #64748b;
+          color: var(--text-muted);
           font-weight: 600;
-          background-color: #f8fafc;
+          margin-bottom: 12px;
+        }
+
+        /* Stat Mini Cards */
+        .stat-value {
+          font-size: 1.5rem;
+          font-weight: 700;
+        }
+
+        .mini-chart-container {
+          height: 45px;
+          margin-top: 8px;
+        }
+
+        /* Table Area */
+        .table-custom {
+          width: 100%;
+          font-size: 0.85rem;
+        }
+
+        .table-custom th {
+          color: #94a3b8;
+          font-weight: 600;
+          border-bottom: 1px solid #f1f5f9;
+          padding-bottom: 8px;
+        }
+
+        .table-custom td {
+          padding: 10px 0;
+          border-bottom: 1px solid #f8fafc;
         }
 
         .img-thumb {
-          width: 44px;
-          height: 44px;
+          width: 36px;
+          height: 36px;
           object-fit: cover;
-          border-radius: 10px;
-          cursor: pointer;
-          border: 1px solid #e2e8f0;
-          transition: transform 0.2s ease;
-        }
-
-        .img-thumb:hover {
-          transform: scale(1.08);
-        }
-
-        .badge-faculty {
-          font-size: 0.75rem;
-          padding: 0.35em 0.65em;
           border-radius: 6px;
-          font-weight: 500;
+          cursor: pointer;
         }
 
-        .badge-hours {
-          background-color: #ecfdf5;
-          color: #047857;
-          border: 1px solid #a7f3d0;
-          font-weight: 600;
-          padding: 0.4em 0.8em;
-          border-radius: 20px;
+        /* Custom Progress Bars for Right Side */
+        .progress-item {
+          margin-bottom: 14px;
         }
 
-        .search-box .form-control, .search-box .form-select {
-          border-radius: 10px;
-          border: 1px solid #cbd5e1;
-          padding: 0.6rem 1rem;
+        .progress-label {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.75rem;
+          color: #64748b;
+          margin-bottom: 4px;
         }
 
-        .search-box .form-control:focus, .search-box .form-select:focus {
-          border-color: var(--primary-color);
-          box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
-        }
-
-        .btn-custom-primary {
-          background-color: var(--primary-color);
-          color: white;
-          border-radius: 10px;
-          padding: 0.6rem 1.2rem;
-          font-weight: 500;
-        }
-
-        .btn-custom-primary:hover {
-          background-color: var(--primary-hover);
-          color: white;
+        .progress-bar-custom {
+          height: 6px;
+          border-radius: 3px;
         }
       </style>
     </head>
     <body>
 
-      <!-- Navbar -->
-      <nav class="navbar navbar-expand-lg sticky-top py-3">
-        <div class="container-fluid px-4">
-          <a class="navbar-brand d-flex align-items-center gap-2 fw-bold text-dark" href="#">
-            <div class="bg-primary text-white p-2 rounded-3 d-flex align-items-center justify-content-center" style="width:36px; height:36px;">
-              <i data-lucide="heart-handshake" style="width:20px;"></i>
-            </div>
-            <span>Volunteer System Admin</span>
-          </a>
-          <div class="d-flex gap-2">
-            <a href="/admin/export-excel" class="btn btn-outline-success d-flex align-items-center gap-2" style="border-radius:10px;">
-              <i data-lucide="file-spreadsheet" style="width:18px;"></i> Export Excel
-            </a>
-            <button class="btn btn-custom-primary d-flex align-items-center gap-2" onclick="loadData()">
-              <i data-lucide="refresh-cw" style="width:18px;"></i> รีเฟรช
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      <div class="container-fluid px-4 py-4">
+      <div class="dashboard-container">
         
-        <!-- Stat Cards Summary -->
-        <div class="row g-3 mb-4">
-          <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
-              <div class="d-flex align-items-center justify-content-between">
-                <div>
-                  <div class="text-muted small fw-medium mb-1">จำนวนการบันทึกทั้งหมด</div>
-                  <h3 class="fw-bold mb-0" id="statCount">0</h3>
-                </div>
-                <div class="stat-icon bg-primary-subtle text-primary">
-                  <i data-lucide="clipboard-list"></i>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
-              <div class="d-flex align-items-center justify-content-between">
-                <div>
-                  <div class="text-muted small fw-medium mb-1">ชั่วโมงสะสมรวมทั้งหมด</div>
-                  <h3 class="fw-bold mb-0 text-success" id="statHours">0 <small class="fs-6">ชม.</small></h3>
-                </div>
-                <div class="stat-icon bg-success-subtle text-success">
-                  <i data-lucide="clock"></i>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
-              <div class="d-flex align-items-center justify-content-between">
-                <div>
-                  <div class="text-muted small fw-medium mb-1">นักศึกษาที่เข้าร่วม</div>
-                  <h3 class="fw-bold mb-0 text-indigo" id="statStudents">0 <small class="fs-6">คน</small></h3>
-                </div>
-                <div class="stat-icon bg-warning-subtle text-warning">
-                  <i data-lucide="users"></i>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <!-- Sidebar ด้านซ้าย -->
+        <aside class="sidebar">
+          <div class="sidebar-brand">DASHBOARD</div>
+          <ul class="nav-list">
+            <li class="nav-item">
+              <a href="#" class="nav-link active">
+                <i data-lucide="home" style="width:18px;"></i> Home
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="#" class="nav-link">
+                <i data-lucide="bar-chart-2" style="width:18px;"></i> Charts
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="#" class="nav-link">
+                <i data-lucide="star" style="width:18px;"></i> Favorites
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="#" class="nav-link">
+                <i data-lucide="message-square" style="width:18px;"></i> Chat
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="#" class="nav-link">
+                <i data-lucide="settings" style="width:18px;"></i> Setting
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="#" class="nav-link">
+                <i data-lucide="help-circle" style="width:18px;"></i> Help
+              </a>
+            </li>
+          </ul>
 
-        <!-- Filter & Search Box -->
-        <div class="card p-3 mb-4 search-box">
-          <div class="row g-3">
-            <div class="col-12 col-md-8">
-              <div class="input-group">
-                <span class="input-group-text bg-white border-end-0 pe-0" style="border-radius: 10px 0 0 10px; border-color: #cbd5e1;">
-                  <i data-lucide="search" class="text-muted" style="width:18px;"></i>
-                </span>
-                <input type="text" id="searchInput" class="form-control border-start-0" style="border-radius: 0 10px 10px 0;" placeholder="ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล หรือกิจกรรม..." onkeyup="filterTable()">
+          <div class="menu-divider">Dashboard Menu</div>
+          <ul class="nav-list">
+            <li class="nav-item">
+              <a href="/admin/export-excel" class="nav-link">
+                <i data-lucide="file-spreadsheet" style="width:18px;"></i> Export Excel
+              </a>
+            </li>
+            <li class="nav-item">
+              <a href="#" class="nav-link" onclick="loadData(); return false;">
+                <i data-lucide="refresh-cw" style="width:18px;"></i> Refresh Data
+              </a>
+            </li>
+          </ul>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-wrapper">
+          
+          <!-- Top Bar -->
+          <div class="top-bar">
+            <div class="search-container">
+              <i data-lucide="search"></i>
+              <input type="text" id="searchInput" placeholder="ค้นหา รหัสนักศึกษา, ชื่อ..." onkeyup="filterData()">
+            </div>
+            <div class="user-profile">
+              <span>hi, Admin</span>
+              <div class="avatar"><i data-lucide="user" style="width:18px;"></i></div>
+            </div>
+          </div>
+
+          <!-- Dashboard Content Grid -->
+          <div class="dashboard-content">
+            <div class="row g-3">
+              
+              <!-- Left Grid (Center Layout ในภาพ) -->
+              <div class="col-12 col-lg-9">
+                <div class="row g-3">
+                  
+                  <!-- Top Line Chart (Detailed Chart 01) -->
+                  <div class="col-12">
+                    <div class="card-custom">
+                      <div class="card-title-custom">Detailed Chart 01 (แนวโน้มการบันทึกชั่วโมง)</div>
+                      <div style="height: 180px;">
+                        <canvas id="mainLineChart"></canvas>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 3 Mini Stat Cards -->
+                  <div class="col-12 col-md-4">
+                    <div class="card-custom">
+                      <div class="card-title-custom">ชั่วโมงสะสมรวม</div>
+                      <div class="stat-value text-primary" id="totalHoursText">0</div>
+                      <div class="mini-chart-container">
+                        <canvas id="miniChart1"></canvas>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div class="col-12 col-md-4">
+                    <div class="card-custom">
+                      <div class="card-title-custom">จำนวนการบันทึก</div>
+                      <div class="stat-value text-warning" id="totalCountText">0</div>
+                      <div class="mini-chart-container">
+                        <canvas id="miniChart2"></canvas>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="col-12 col-md-4">
+                    <div class="card-custom">
+                      <div class="card-title-custom">นักศึกษาเข้าร่วม</div>
+                      <div class="stat-value text-success" id="totalStudentsText">0</div>
+                      <div class="mini-chart-container">
+                        <canvas id="miniChart3"></canvas>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Donut Chart & Bar Chart -->
+                  <div class="col-12 col-md-4">
+                    <div class="card-custom text-center">
+                      <div class="card-title-custom text-start">Profile Strength (ภาพรวมเป้าหมาย)</div>
+                      <div style="height: 140px; position: relative;" class="d-flex align-items-center justify-content-center">
+                        <canvas id="donutChart"></canvas>
+                        <div style="position: absolute; font-weight:700; font-size:1.2rem;" id="donutPercentText">75%</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="col-12 col-md-8">
+                    <div class="card-custom">
+                      <div class="card-title-custom">Detailed Chart 02 (สถิติตามคณะ)</div>
+                      <div style="height: 140px;">
+                        <canvas id="barChart"></canvas>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
               </div>
-            </div>
-            <div class="col-12 col-md-4">
-              <select id="facultyFilter" class="form-select" onchange="filterTable()">
-                <option value="">🏛️ แสดงทุกคณะ</option>
-                <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
-                <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
-                <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
-              </select>
+
+              <!-- Right Panel Grid -->
+              <div class="col-12 col-lg-3">
+                <div class="row g-3">
+                  
+                  <!-- Average Charts -->
+                  <div class="col-12">
+                    <div class="card-custom">
+                      <div class="card-title-custom">Average Charts</div>
+                      <div class="progress-item">
+                        <div class="progress-label"><span>คณะวิทยาศาสตร์ฯ (01)</span><span>70%</span></div>
+                        <div class="progress"><div class="progress-bar bg-danger progress-bar-custom" style="width: 70%"></div></div>
+                      </div>
+                      <div class="progress-item">
+                        <div class="progress-label"><span>คณะบริหารธุรกิจฯ (02)</span><span>45%</span></div>
+                        <div class="progress"><div class="progress-bar bg-primary progress-bar-custom" style="width: 45%"></div></div>
+                      </div>
+                      <div class="progress-item">
+                        <div class="progress-label"><span>คณะวิศวกรรมศาสตร์ (03)</span><span>85%</span></div>
+                        <div class="progress"><div class="progress-bar bg-warning progress-bar-custom" style="width: 85%"></div></div>
+                      </div>
+                      <div class="progress-item">
+                        <div class="progress-label"><span>อื่นๆ</span><span>30%</span></div>
+                        <div class="progress"><div class="progress-bar bg-success progress-bar-custom" style="width: 30%"></div></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Recently Activity / Record List -->
+                  <div class="col-12">
+                    <div class="card-custom" style="max-height: 300px; overflow-y: auto;">
+                      <div class="card-title-custom">Recently Activity</div>
+                      <table class="table-custom">
+                        <thead>
+                          <tr>
+                            <th>รูป</th>
+                            <th>ข้อมูล</th>
+                            <th>ชม.</th>
+                          </tr>
+                        </thead>
+                        <tbody id="recentTbody">
+                          <tr><td colspan="3" class="text-center text-muted">กำลังโหลด...</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
             </div>
           </div>
-        </div>
 
-        <!-- Data Table -->
-        <div class="card table-card">
-          <div class="table-responsive">
-            <table class="table align-middle mb-0">
-              <thead>
-                <tr>
-                  <th>หลักฐาน</th>
-                  <th>ข้อมูลนักศึกษา</th>
-                  <th>คณะ</th>
-                  <th>ชื่อกิจกรรม</th>
-                  <th>ชั่วโมง</th>
-                  <th>วันที่บันทึก</th>
-                </tr>
-              </thead>
-              <tbody id="recordTableBody">
-                <tr><td colspan="6" class="text-center py-5 text-muted">กำลังโหลดข้อมูล...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
+        </main>
       </div>
 
       <!-- Modal ขยายรูป -->
@@ -399,82 +590,157 @@ app.get('/admin', (req, res) => {
       <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
       <script>
         let allRecords = [];
+        let charts = {};
 
         async function loadData() {
           try {
             const res = await fetch('/api/admin/records');
             const result = await res.json();
             if (result.success) {
-              allRecords = result.data;
-              updateStats(allRecords);
-              renderData(allRecords);
+              allRecords = result.data || [];
+              updateDashboard(allRecords);
             }
           } catch (err) {
-            alert('ไม่สามารถดึงข้อมูลได้');
+            console.error('Error fetching data:', err);
           }
         }
 
-        function updateStats(data) {
-          document.getElementById('statCount').innerText = data.length.toLocaleString();
-          
+        function updateDashboard(data) {
+          // Stat Counters
           const totalHours = data.reduce((sum, item) => sum + (item.hours || 0), 0);
-          document.getElementById('statHours').innerText = totalHours.toLocaleString();
-
+          const totalCount = data.length;
           const uniqueStudents = new Set(data.map(item => item.studentId)).size;
-          document.getElementById('statStudents').innerText = uniqueStudents.toLocaleString();
+
+          document.getElementById('totalHoursText').innerText = totalHours.toLocaleString();
+          document.getElementById('totalCountText').innerText = totalCount.toLocaleString();
+          document.getElementById('totalStudentsText').innerText = uniqueStudents.toLocaleString();
+
+          renderRecentTable(data);
+          initCharts(data);
         }
 
-        function renderData(data) {
-          const tbody = document.getElementById('recordTableBody');
+        function renderRecentTable(data) {
+          const tbody = document.getElementById('recentTbody');
           tbody.innerHTML = '';
 
-          if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted">ไม่พบข้อมูลบันทึก</td></tr>';
+          if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">ไม่มีข้อมูล</td></tr>';
             return;
           }
 
-          const facultyColors = {
-            '01': 'bg-success-subtle text-success border-success-subtle',
-            '02': 'bg-primary-subtle text-primary border-primary-subtle',
-            '03': 'bg-warning-subtle text-warning-emphasis border-warning-subtle'
-          };
-
-          data.forEach(item => {
-            const dateObj = new Date(item.date);
-            const dateStr = dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
-            const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-
+          data.slice(0, 10).forEach(item => {
             const imgHtml = item.imageUrl 
-              ? '<img src="' + item.imageUrl + '" class="img-thumb shadow-sm" onclick="showModal(\'' + item.imageUrl + '\')">'
-              : '<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>';
-
-            const facultyClass = facultyColors[item.facultyCode] || 'bg-light text-dark';
-            const facultyBadge = item.facultyCode 
-              ? '<span class="badge badge-faculty border ' + facultyClass + '">[' + item.facultyCode + '] ' + (item.facultyName || '') + '</span>'
-              : '<span class="text-muted small">ไม่ระบุ</span>';
-
-            const nameStr = item.name || 'ไม่ระบุชื่อ';
-            const studentIdStr = item.studentId || '-';
-            const activityStr = item.activityName || 'ไม่ระบุกิจกรรม';
-            const hoursNum = item.hours || 0;
+              ? '<img src="' + item.imageUrl + '" class="img-thumb" onclick="showModal(\'' + item.imageUrl + '\')">'
+              : '<span class="text-muted" style="font-size:10px;">ไม่มีรูป</span>';
 
             const tr = document.createElement('tr');
             tr.innerHTML = '<td>' + imgHtml + '</td>' +
               '<td>' +
-                '<div class="fw-bold text-dark">' + nameStr + '</div>' +
-                '<div class="text-muted small">🆔 ' + studentIdStr + '</div>' +
+                '<div style="font-weight:600; font-size:0.8rem;">' + (item.name || 'ไม่ระบุชื่อ') + '</div>' +
+                '<div style="font-size:0.7rem; color:#94a3b8;">' + (item.studentId || '-') + '</div>' +
               '</td>' +
-              '<td>' + facultyBadge + '</td>' +
-              '<td><div class="fw-medium text-dark">' + activityStr + '</div></td>' +
-              '<td><span class="badge badge-hours">+' + hoursNum + ' ชม.</span></td>' +
-              '<td>' +
-                '<div class="small fw-medium text-dark">' + dateStr + '</div>' +
-                '<div class="text-muted" style="font-size: 11px;">' + timeStr + ' น.</div>' +
-              '</td>';
+              '<td><span class="badge bg-success-subtle text-success">+' + (item.hours || 0) + '</span></td>';
             tbody.appendChild(tr);
           });
+        }
 
-          lucide.createIcons();
+        function initCharts(data) {
+          // Main Line Chart
+          if (charts.mainLine) charts.mainLine.destroy();
+          const ctxLine = document.getElementById('mainLineChart').getContext('2d');
+          charts.mainLine = new Chart(ctxLine, {
+            type: 'line',
+            data: {
+              labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'],
+              datasets: [{
+                label: 'ชั่วโมงจิตอาสา',
+                data: [12, 19, 8, 25, 22, 30, 28],
+                borderColor: '#ffaa00',
+                backgroundColor: 'rgba(255,170,0,0.1)',
+                tension: 0.4,
+                pointBackgroundColor: ['#0088ff', '#0088ff', '#0088ff', '#0088ff', '#0088ff', '#0088ff', '#0088ff']
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: { y: { display: false }, x: { grid: { display: false } } }
+            }
+          });
+
+          // Mini Area Chart 1
+          createMiniChart('miniChart1', [10, 20, 15, 30, 25, 40], '#0088ff');
+          // Mini Area Chart 2
+          createMiniChart('miniChart2', [5, 15, 25, 20, 35, 30], '#ffaa00');
+          // Mini Area Chart 3
+          createMiniChart('miniChart3', [12, 18, 14, 22, 28, 35], '#00cc88');
+
+          // Donut Chart
+          if (charts.donut) charts.donut.destroy();
+          const ctxDonut = document.getElementById('donutChart').getContext('2d');
+          charts.donut = new Chart(ctxDonut, {
+            type: 'doughnut',
+            data: {
+              datasets: [{
+                data: [75, 25],
+                backgroundColor: ['#ffaa00', '#e2e8f0'],
+                borderWidth: 0
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              cutout: '80%',
+              plugins: { legend: { display: false } }
+            }
+          });
+
+          // Bar Chart
+          if (charts.bar) charts.bar.destroy();
+          const ctxBar = document.getElementById('barChart').getContext('2d');
+          charts.bar = new Chart(ctxBar, {
+            type: 'bar',
+            data: {
+              labels: ['01', '02', '03', 'อื่นๆ'],
+              datasets: [{
+                data: [12, 19, 15, 8],
+                backgroundColor: ['#ff4d4d', '#0088ff', '#ffaa00', '#aa00ff'],
+                borderRadius: 4
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: { y: { display: false }, x: { grid: { display: false } } }
+            }
+          });
+        }
+
+        function createMiniChart(id, data, color) {
+          if (charts[id]) charts[id].destroy();
+          const ctx = document.getElementById(id).getContext('2d');
+          charts[id] = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: data.map((_, i) => i),
+              datasets: [{
+                data: data,
+                borderColor: color,
+                backgroundColor: color + '33',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: { y: { display: false }, x: { display: false } }
+            }
+          });
         }
 
         function showModal(url) {
@@ -482,25 +748,19 @@ app.get('/admin', (req, res) => {
           new bootstrap.Modal(document.getElementById('imageModal')).show();
         }
 
-        function filterTable() {
+        function filterData() {
           const searchText = document.getElementById('searchInput').value.toLowerCase();
-          const selectedFaculty = document.getElementById('facultyFilter').value;
-
-          const filtered = allRecords.filter(item => {
-            const matchSearch = (item.studentId && item.studentId.toLowerCase().includes(searchText)) || 
-                                (item.name && item.name.toLowerCase().includes(searchText)) ||
-                                (item.facultyName && item.facultyName.toLowerCase().includes(searchText)) ||
-                                (item.activityName && item.activityName.toLowerCase().includes(searchText));
-            
-            const matchFaculty = selectedFaculty === '' || item.facultyCode === selectedFaculty;
-
-            return matchSearch && matchFaculty;
-          });
-
-          renderData(filtered);
+          const filtered = allRecords.filter(item => 
+            (item.studentId && item.studentId.toLowerCase().includes(searchText)) ||
+            (item.name && item.name.toLowerCase().includes(searchText))
+          );
+          renderRecentTable(filtered);
         }
 
-        loadData();
+        window.onload = function() {
+          lucide.createIcons();
+          loadData();
+        };
       </script>
     </body>
     </html>
