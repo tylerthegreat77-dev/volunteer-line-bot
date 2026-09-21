@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-// บังคับให้ Node.js ใช้ Google DNS
+// บังคับให้ Node.js ใช้ Google DNS (ช่วยแก้ปัญหา Resolve DNS บน Server)
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -42,7 +42,7 @@ const blobClient = line.messagingApi
   ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
   : client;
 
-// Webhook LINE
+// Webhook LINE (ต้องวางก่อน express.json middleware เพื่อให้ line.middleware ทำงานได้ถูกต้อง)
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -75,7 +75,7 @@ const volunteerSchema = new mongoose.Schema({
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
-// Schema สำหรับเก็บรูปภาพชั่วคราว
+// Schema สำหรับเก็บรูปภาพชั่วคราว (ลบอัตโนมัติใน 30 นาที)
 const tempImageSchema = new mongoose.Schema({
   userId: String,
   imageUrl: String,
@@ -701,7 +701,7 @@ async function handleEvent(event) {
     }
   }
 
-  // 3. ข้อความแนะนำการใช้งาน
+  // 3. ข้อความแนะนำการใช้งาน (สำหรับข้อความทั่วไปอื่นๆ)
   const helpText = `👋 ยินดีต้อนรับสู่ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
                    `📌 ขั้นตอนการใช้งาน:\n` +
                    `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
