@@ -1,195 +1,289 @@
-require('dotenv').config();
-
-// บังคับให้ Node.js ใช้ Google DNS
-const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']);
-
 const express = require('express');
 const line = require('@line/bot-sdk');
 const mongoose = require('mongoose');
-const path = require('path');
-const ExcelJS = require('exceljs');
-const cloudinary = require('cloudinary').v2;
+const dotenv = require('dotenv');
+const xlsx = require('xlsx');
 
-// 🔑 ตั้งค่า Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'ao9yrwpm',
-  api_key: process.env.CLOUDINARY_API_KEY || '999874921286948',
-  api_secret: process.env.CLOUDINARY_API_SECRET || 'Kyk5Mk1qlZ2uQ-Vt9QMJOtUr46M'
+dotenv.config();
+
+const app = express();
+
+// Line Bot Config
+const lineConfig = {
+  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.CHANNEL_SECRET,
+};
+
+const client = new line.Client(lineConfig);
+
+// Connect MongoDB
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/volunteer_db';
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('MongoDB Connected Successfully'))
+  .catch((err) => console.error('MongoDB Connection Error:', err));
+
+// MongoDB Schema & Model
+const VolunteerSchema = new mongoose.Schema({
+  userId: String,
+  studentId: String,
+  name: String,
+  facultyCode: String,
+  facultyName: String,
+  activityName: String,
+  hours: Number,
+  imageUrl: String,
+  date: { type: Date, default: Date.now }
 });
 
-// 🏛️ ตารางแปลงรหัสคณะเป็นชื่อคณะ
-const FACULTY_MAP = {
+const Volunteer = mongoose.model('Volunteer', VolunteerSchema);
+
+// Memory state เก็บสถานะกรอกข้อมูลของแต่ละคน
+const userStates = {};
+
+const facultyMap = {
   '01': 'คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร',
   '02': 'คณะบริหารธุรกิจและศิลปศาสตร์',
   '03': 'คณะวิศวกรรมศาสตร์'
 };
 
-const app = express();
-
-const config = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET,
-};
-
-// Messaging API Client
-const client = line.messagingApi 
-  ? new line.messagingApi.MessagingApiClient({ channelAccessToken: config.channelAccessToken })
-  : new line.Client(config);
-
-const blobClient = line.messagingApi 
-  ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
-  : client;
-
-// Webhook LINE
-app.post('/webhook', line.middleware(config), (req, res) => {
+// Webhook for LINE
+app.post('/webhook', line.middleware(lineConfig), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => {
-      console.error('Webhook Error:', err);
+      console.error(err);
       res.status(500).end();
     });
 });
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.urlencoded({ extended: true }));
 
-// เชื่อมต่อ MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!'))
-  .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
+// Handle Events
+async function handleEvent(event) {
+  if (event.type !== 'message') {
+    return Promise.resolve(null);
+  }
 
-// Schema สำหรับเก็บข้อมูลจิตอาสา
-const volunteerSchema = new mongoose.Schema({
-  userId: String,
-  facultyCode: String,
-  facultyName: String,
-  studentId: String,
-  name: { type: String, default: 'ไม่ระบุชื่อ' },
-  hours: Number,
-  activityName: { type: String, default: 'ไม่ระบุกิจกรรม' },
-  imageUrl: { type: String, default: '' },
-  date: { type: Date, default: Date.now }
-});
+  const userId = event.source.userId;
+  const userText = event.message.text ? event.message.text.trim() : '';
 
-const Volunteer = mongoose.model('Volunteer', volunteerSchema);
+  // เช็คคำสั่งเริ่ม
+  if (userText === 'บันทึกจิตอาสา') {
+    userStates[userId] = { step: 'WAITING_FACULTY' };
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: 'ยินดีต้อนรับสู่ระบบบันทึกจิตอาสาครับ!\nกรุณาเลือกหรือพิมพ์รหัสคณะของคุณ:\n01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n02 = คณะบริหารธุรกิจและศิลปศาสตร์\n03 = คณะวิศวกรรมศาสตร์'
+    });
+  }
 
-// Schema สำหรับเก็บรูปภาพชั่วคราว
-const tempImageSchema = new mongoose.Schema({
-  userId: String,
-  imageUrl: String,
-  createdAt: { type: Date, default: Date.now, expires: 1800 }
-});
+  if (userText === 'เช็คชั่วโมง' || userText === 'ตรวจสอบชั่วโมง') {
+    const records = await Volunteer.find({ userId });
+    if (records.length === 0) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'ยังไม่พบประวัติการบันทึกจิตอาสาของคุณครับ'
+      });
+    }
 
-const TempImage = mongoose.model('TempImage', tempImageSchema);
+    const totalHours = records.reduce((sum, item) => sum + (item.hours || 0), 0);
+    let msg = `📊 ประวัติการบันทึกของคุณ (${records[0].name || ''})\n`;
+    msg += `รหัสนักศึกษา: ${records[0].studentId || '-'}\n`;
+    msg += `รวมทั้งสิ้น: ${totalHours} ชั่วโมง\n\n`;
+    records.forEach((r, idx) => {
+      msg += `${idx + 1}. ${r.activityName} (${r.hours} ชม.)\n`;
+    });
 
-// ==========================================
-// 👑 ADMIN DASHBOARD & REST API
-// ==========================================
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: msg
+    });
+  }
 
-// 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
+  const state = userStates[userId];
+
+  if (!state) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: 'พิมพ์ "บันทึกจิตอาสา" เพื่อเริ่มบันทึกข้อมูล หรือพิมพ์ "เช็คชั่วโมง" เพื่อดูประวัติย่อครับ'
+    });
+  }
+
+  // Step 1: รอรับรหัสคณะ
+  if (state.step === 'WAITING_FACULTY') {
+    if (!facultyMap[userText]) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'รหัสคณะไม่ถูกต้อง กรุณาพิมพ์เฉพาะเลขรหัสคณะ (01, 02 หรือ 03) ครับ'
+      });
+    }
+    state.facultyCode = userText;
+    state.facultyName = facultyMap[userText];
+    state.step = 'WAITING_STUDENT_ID';
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `เลือกคณะ: ${state.facultyName}\n\nกรุณากรอก "รหัสนักศึกษา" ของคุณ:`
+    });
+  }
+
+  // Step 2: รอรับรหัสนักศึกษา
+  if (state.step === 'WAITING_STUDENT_ID') {
+    state.studentId = userText;
+    state.step = 'WAITING_NAME';
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: 'กรุณากรอก "ชื่อ-นามสกุล" ของคุณ:'
+    });
+  }
+
+  // Step 3: รอรับชื่อ-นามสกุล
+  if (state.step === 'WAITING_NAME') {
+    state.name = userText;
+    state.step = 'WAITING_ACTIVITY';
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: 'กรุณากรอก "ชื่อกิจกรรมจิตอาสา":'
+    });
+  }
+
+  // Step 4: รอรับชื่อกิจกรรม
+  if (state.step === 'WAITING_ACTIVITY') {
+    state.activityName = userText;
+    state.step = 'WAITING_HOURS';
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: 'กรุณากรอก "จำนวนชั่วโมงจิตอาสา" (เช่น 2 หรือ 3.5):'
+    });
+  }
+
+  // Step 5: รอรับจำนวนชั่วโมง
+  if (state.step === 'WAITING_HOURS') {
+    const hours = parseFloat(userText);
+    if (isNaN(hours) || hours <= 0) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'กรุณากรอกจำนวนชั่วโมงเป็นตัวเลขที่ถูกต้อง (เช่น 2 หรือ 3.5):'
+      });
+    }
+
+    state.hours = hours;
+    state.step = 'WAITING_IMAGE';
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: 'กรุณาส่ง "รูปถ่ายหลักฐาน" การทำกิจกรรมจิตอาสาครับ (หรือพิมพ์ "ไม่มี" หากไม่มีรูป):'
+    });
+  }
+
+  // Step 6: รอรับรูปถ่ายหลักฐาน
+  if (state.step === 'WAITING_IMAGE') {
+    if (event.message.type === 'image') {
+      state.imageUrl = `https://api.line.me/v2/bot/message/${event.message.id}/content`;
+    } else if (userText === 'ไม่มี') {
+      state.imageUrl = '';
+    } else {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'กรุณาส่งไฟล์รูปภาพ หรือพิมพ์คำว่า "ไม่มี" ครับ'
+      });
+    }
+
+    // บันทึกลง MongoDB
+    const newRecord = new Volunteer({
+      userId,
+      studentId: state.studentId,
+      name: state.name,
+      facultyCode: state.facultyCode,
+      facultyName: state.facultyName,
+      activityName: state.activityName,
+      hours: state.hours,
+      imageUrl: state.imageUrl
+    });
+
+    await newRecord.save();
+    delete userStates[userId];
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `✅ บันทึกข้อมูลจิตอาสาเรียบร้อยแล้ว!\n\nคณะ: ${newRecord.facultyName}\nนักศึกษา: ${newRecord.name} (${newRecord.studentId})\nกิจกรรม: ${newRecord.activityName}\nจำนวน: ${newRecord.hours} ชั่วโมง`
+    });
+  }
+}
+
+// API Admin List Records
 app.get('/api/admin/records', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
     res.json({ success: true, data: records });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 2. API แก้ไขข้อมูลรายการจิตอาสา
+// API Admin Update Record
 app.put('/api/admin/records/:id', async (req, res) => {
   try {
-    const { facultyCode, studentId, name, hours, activityName } = req.body;
-    const facultyName = FACULTY_MAP[facultyCode] || 'ไม่ระบุคณะ';
+    const { facultyCode, studentId, name, activityName, hours } = req.body;
+    const facultyName = facultyMap[facultyCode] || 'ไม่ระบุ';
 
-    const updatedRecord = await Volunteer.findByIdAndUpdate(
-      req.params.id,
-      {
-        facultyCode,
-        facultyName,
-        studentId,
-        name,
-        hours: Number(hours),
-        activityName
-      },
-      { new: true }
-    );
+    const updated = await Volunteer.findByIdAndUpdate(req.params.id, {
+      facultyCode,
+      facultyName,
+      studentId,
+      name,
+      activityName,
+      hours: parseFloat(hours)
+    }, { new: true });
 
-    if (!updatedRecord) {
-      return res.status(404).json({ success: false, message: 'ไม่พบรายการที่ต้องการแก้ไข' });
-    }
-
-    res.json({ success: true, data: updatedRecord });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 3. API ลบรายการจิตอาสา
+// API Admin Delete Record
 app.delete('/api/admin/records/:id', async (req, res) => {
   try {
-    const deletedRecord = await Volunteer.findByIdAndDelete(req.params.id);
-    if (!deletedRecord) {
-      return res.status(404).json({ success: false, message: 'ไม่พบรายการที่ต้องการลบ' });
-    }
+    await Volunteer.findByIdAndDelete(req.params.id);
     res.json({ success: true, message: 'ลบรายการสำเร็จ' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 4. Export Excel
+// Export Excel
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
+    const data = records.map((r, i) => ({
+      'ลำดับ': i + 1,
+      'วันที่บันทึก': new Date(r.date).toLocaleString('th-TH'),
+      'รหัสคณะ': r.facultyCode || '',
+      'ชื่อคณะ': r.facultyName || '',
+      'รหัสนักศึกษา': r.studentId || '',
+      'ชื่อ-นามสกุล': r.name || '',
+      'กิจกรรม': r.activityName || '',
+      'จำนวนชั่วโมง': r.hours || 0
+    }));
 
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('รายงานชั่วโมงจิตอาสา');
+    const ws = xlsx.utils.json_to_sheet(data);
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, "VolunteerData");
 
-    worksheet.columns = [
-      { header: 'รหัสคณะ', key: 'facultyCode', width: 12 },
-      { header: 'ชื่อคณะ', key: 'facultyName', width: 35 },
-      { header: 'รหัสนักศึกษา', key: 'studentId', width: 20 },
-      { header: 'ชื่อ-นามสกุล', key: 'name', width: 25 },
-      { header: 'ชื่อกิจกรรม', key: 'activityName', width: 30 },
-      { header: 'ชั่วโมงที่บันทึก', key: 'hours', width: 15 },
-      { header: 'วันที่บันทึก', key: 'date', width: 22 },
-      { header: 'ลิงก์รูปภาพหลักฐาน', key: 'imageUrl', width: 45 }
-    ];
-
-    worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'DDEBF7' }
-    };
-
-    records.forEach(v => {
-      worksheet.addRow({
-        facultyCode: v.facultyCode || '-',
-        facultyName: v.facultyName || 'ไม่ระบุคณะ',
-        studentId: v.studentId,
-        name: v.name || 'ไม่ระบุชื่อ',
-        activityName: v.activityName || 'ไม่ระบุกิจกรรม',
-        hours: v.hours,
-        date: v.date ? new Date(v.date).toLocaleString('th-TH') : '-',
-        imageUrl: v.imageUrl || 'ไม่มีรูปภาพ'
-      });
-    });
-
+    const buf = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=Volunteer_Hours_Report.xlsx');
-
-    await workbook.xlsx.write(res);
-    res.end();
-  } catch (error) {
-    console.error('Error exporting Excel:', error);
-    res.status(500).send('เกิดข้อผิดพลาดในการสร้างไฟล์ Excel');
+    res.setHeader('Content-Disposition', 'attachment; filename=volunteer_records.xlsx');
+    res.send(buf);
+  } catch (err) {
+    res.status(500).send('Error generating Excel file');
   }
 });
 
-// 5. หน้า Admin Dashboard สไตล์ Modern UI + Charts + Edit Support
+// Admin Dashboard Route
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -532,7 +626,6 @@ app.get('/admin', (req, res) => {
         }
 
         function renderCharts(data) {
-          // 1. Chart ชั่วโมงแยกตามคณะ
           const facultyHours = { '01': 0, '02': 0, '03': 0, 'อื่นๆ': 0 };
           data.forEach(item => {
             if (facultyHours[item.facultyCode] !== undefined) {
@@ -561,7 +654,6 @@ app.get('/admin', (req, res) => {
             }
           });
 
-          // 2. Chart Top 5 นักศึกษาที่มีชั่วโมงรวมสูงสุด
           const studentMap = {};
           data.forEach(item => {
             const key = item.studentId;
@@ -619,37 +711,36 @@ app.get('/admin', (req, res) => {
             const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 
             const imgHtml = item.imageUrl 
-              ? `<img src="${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('${item.imageUrl}')">`
-              : `<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>`;
+              ? '<img src="' + item.imageUrl + '" class="img-thumb shadow-sm" onclick="showModal(\'' + item.imageUrl + '\')">'
+              : '<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>';
 
             const facultyClass = facultyColors[item.facultyCode] || 'bg-light text-dark';
             const facultyBadge = item.facultyCode 
-              ? `<span class="badge badge-faculty border ${facultyClass}">[${item.facultyCode}]${item.facultyName || ''}</span>`
-              : `<span class="text-muted small">ไม่ระบุ</span>`;
+              ? '<span class="badge badge-faculty border ' + facultyClass + '">[' + item.facultyCode + '] ' + (item.facultyName || '') + '</span>'
+              : '<span class="text-muted small">ไม่ระบุ</span>';
 
             const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>${imgHtml}</td>
-              <td>
-                <div class="fw-bold text-dark">${item.name || 'ไม่ระบุชื่อ'}</div>
-                <div class="text-muted small">🆔 ${item.studentId}</div>
-              </td>
-              <td>${facultyBadge}</td>
-              <td><div class="fw-medium text-dark">${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
-              <td><span class="badge badge-hours">+${item.hours} ชม.</span></td>
-              <td>
-                <div class="small fw-medium text-dark">${dateStr}</div>
-                <div class="text-muted" style="font-size: 11px;">${timeStr} น.</div>
-              </td>
-              <td class="text-end">
-                <button class="btn btn-sm btn-light text-primary me-1" onclick='openEditModal(${JSON.stringify(item)})'>
-                  <i data-lucide="edit-3" style="width:16px;"></i>
-                </button>
-                <button class="btn btn-sm btn-light text-danger" onclick="deleteRecord('${item._id}')">
-                  <i data-lucide="trash-2" style="width:16px;"></i>
-                </button>
-              </td>
-            `;
+            tr.innerHTML = 
+              '<td>' + imgHtml + '</td>' +
+              '<td>' +
+                '<div class="fw-bold text-dark">' + (item.name || 'ไม่ระบุชื่อ') + '</div>' +
+                '<div class="text-muted small">🆔 ' + item.studentId + '</div>' +
+              '</td>' +
+              '<td>' + facultyBadge + '</td>' +
+              '<td><div class="fw-medium text-dark">' + (item.activityName || 'ไม่ระบุกิจกรรม') + '</div></td>' +
+              '<td><span class="badge badge-hours">+' + item.hours + ' ชม.</span></td>' +
+              '<td>' +
+                '<div class="small fw-medium text-dark">' + dateStr + '</div>' +
+                '<div class="text-muted" style="font-size: 11px;">' + timeStr + ' น.</div>' +
+              '</td>' +
+              '<td class="text-end">' +
+                '<button class="btn btn-sm btn-light text-primary me-1" onclick=\'openEditModal(' + JSON.stringify(item) + ')\'>' +
+                  '<i data-lucide="edit-3" style="width:16px;"></i>' +
+                '</button>' +
+                '<button class="btn btn-sm btn-light text-danger" onclick="deleteRecord(\'' + item._id + '\')">' +
+                  '<i data-lucide="trash-2" style="width:16px;"></i>' +
+                '</button>' +
+              '</td>';
             tbody.appendChild(tr);
           });
 
@@ -683,7 +774,7 @@ app.get('/admin', (req, res) => {
           };
 
           try {
-            const res = await fetch(`/api/admin/records/${id}`, {
+            const res = await fetch('/api/admin/records/' + id, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
@@ -705,7 +796,7 @@ app.get('/admin', (req, res) => {
           if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?')) return;
 
           try {
-            const res = await fetch(`/api/admin/records/${id}`, { method: 'DELETE' });
+            const res = await fetch('/api/admin/records/' + id, { method: 'DELETE' });
             const result = await res.json();
             if (result.success) {
               loadData();
@@ -742,221 +833,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// ==========================================
-// 💬 LINE BOT HANDLER
-// ==========================================
-
-function replyTextMsg(replyToken, text) {
-  if (client.replyMessage && typeof client.replyMessage === 'function') {
-    return client.replyMessage({
-      replyToken: replyToken,
-      messages: [{ type: 'text', text }]
-    });
-  }
-  return client.replyMessage(replyToken, { type: 'text', text });
-}
-
-async function handleImageMessage(event) {
-  const userId = event.source.userId;
-  const messageId = event.message.id;
-
-  try {
-    const stream = await blobClient.getMessageContent(messageId);
-    
-    const chunks = [];
-    for await (const chunk of stream) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-    const base64Image = `data:image/jpeg;base64,${buffer.toString('base64')}`;
-
-    const uploadResult = await cloudinary.uploader.upload(base64Image, {
-      folder: 'volunteer_proofs'
-    });
-
-    const imageUrl = uploadResult.secure_url;
-
-    await TempImage.findOneAndUpdate(
-      { userId },
-      { imageUrl, createdAt: new Date() },
-      { upsert: true, new: true }
-    );
-
-    return replyTextMsg(
-      event.replyToken,
-      '📷 ได้รับรูปภาพหลักฐานเรียบร้อยแล้วครับ!\n\nกรุณาพิมพ์บันทึกชั่วโมงต่อได้เลย เช่น:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
-    );
-
-  } catch (error) {
-    console.error('Error handling image with Cloudinary:', error);
-    return replyTextMsg(event.replyToken, '❌ ไม่สามารถบันทึกรูปภาพได้ กรุณาลองส่งใหม่อีกครั้ง');
-  }
-}
-
-async function handleEvent(event) {
-  if (event.type === 'message' && event.message.type === 'image') {
-    return handleImageMessage(event);
-  }
-
-  if (event.type !== 'message' || event.message.type !== 'text') {
-    return Promise.resolve(null);
-  }
-
-  const userText = event.message.text.trim();
-  const userId = event.source.userId;
-
-  // 1. คำสั่ง "เช็คชั่วโมง"
-  if (userText.startsWith('เช็คชั่วโมง')) {
-    const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
-    const studentId = parts[1];
-
-    if (!studentId) {
-      return replyTextMsg(event.replyToken, '❌ กรุณาระบุรหัสนักศึกษา เช่น:\nเช็คชั่วโมง 6501234567');
-    }
-
-    try {
-      const records = await Volunteer.find({ studentId: studentId });
-
-      if (records.length === 0) {
-        return replyTextMsg(event.replyToken, `🔍 ไม่พบข้อมูลการบันทึกชั่วโมงของรหัส: ${studentId}`);
-      }
-
-      const totalHours = records.reduce((sum, item) => sum + item.hours, 0);
-      const validRecord = records.reverse().find(r => r.name && r.name !== 'ไม่ระบุชื่อ');
-      const studentName = validRecord ? validRecord.name : (records[0].name || 'ไม่ระบุชื่อ');
-      const facultyName = validRecord ? (validRecord.facultyName || 'ไม่ระบุ') : 'ไม่ระบุ';
-
-      const replyText = `📊 สรุปชั่วโมงจิตอาสา\n\n` +
-                        `👤 ชื่อ: ${studentName}\n` +
-                        `🆔 รหัส: ${studentId}\n` +
-                        `🏛 คณะ: ${facultyName}\n` +
-                        `📝 บันทึกทั้งหมด: ${records.length} ครั้ง\n` +
-                        `⏱ ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
-
-      return replyTextMsg(event.replyToken, replyText);
-
-    } catch (error) {
-      console.error('Error fetching data:', error);
-      return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการดึงข้อมูล กรุณาลองใหม่อีกครั้ง');
-    }
-  }
-
-  // 2. คำสั่ง "บันทึก"
-  if (userText.startsWith('บันทึก')) {
-    const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
-
-    if (parts.length < 6) {
-      return replyTextMsg(
-        event.replyToken, 
-        '❌ รูปแบบคำสั่งไม่ถูกต้อง!\nกรุณาพิมพ์: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <จำนวนชั่วโมง> <ชื่อกิจกรรม>\n\n' +
-        '🏛 รหัสคณะ:\n01 = วิทยาศาสตร์และเทคโนโลยีการเกษตร\n02 = บริหารธุรกิจและศิลปศาสตร์\n03 = วิศวกรรมศาสตร์\n\n' +
-        'ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
-      );
-    }
-
-    const facultyCode = parts[1];
-    const studentId = parts[2];
-
-    let hoursIndex = -1;
-    for (let i = 3; i < parts.length - 1; i++) {
-      if (!isNaN(parts[i])) {
-        hoursIndex = i;
-        break;
-      }
-    }
-
-    if (hoursIndex === -1) {
-      return replyTextMsg(
-        event.replyToken, 
-        '❌ ไม่พบจำนวนชั่วโมงที่เป็นตัวเลข หรือพิมพ์รูปแบบไม่ถูกต้อง\nตัวอย่างที่ถูกต้อง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
-      );
-    }
-
-    const name = parts.slice(3, hoursIndex).join(' ').trim();
-    const hours = parseFloat(parts[hoursIndex]);
-    const activityName = parts.slice(hoursIndex + 1).join(' ').trim();
-
-    if (!FACULTY_MAP[facultyCode]) {
-      return replyTextMsg(
-        event.replyToken,
-        '❌ รหัสคณะไม่ถูกต้อง!\nกรุณาใช้รหัสคณะดังนี้:\n01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n02 = คณะบริหารธุรกิจและศิลปศาสตร์\n03 = คณะวิศวกรรมศาสตร์'
-      );
-    }
-
-    const facultyName = FACULTY_MAP[facultyCode];
-
-    if (!name) {
-      return replyTextMsg(event.replyToken, '❌ ไม่พบชื่อ-นามสกุล กรุณาตรวจสอบรูปแบบอีกครั้ง');
-    }
-
-    if (isNaN(hours) || hours <= 0) {
-      return replyTextMsg(event.replyToken, '❌ จำนวนชั่วโมงต้องเป็นตัวเลขที่มากกว่า 0');
-    }
-
-    if (!activityName) {
-      return replyTextMsg(event.replyToken, '❌ กรุณาระบุชื่อกิจกรรมต่อท้ายด้วยครับ');
-    }
-
-    try {
-      const tempImg = await TempImage.findOneAndDelete({ userId });
-      const imageUrl = tempImg ? tempImg.imageUrl : '';
-
-      const newRecord = new Volunteer({ 
-        userId, 
-        facultyCode, 
-        facultyName, 
-        studentId, 
-        name, 
-        hours, 
-        activityName, 
-        imageUrl 
-      });
-
-      await newRecord.save();
-
-      const allRecords = await Volunteer.find({ studentId });
-      const totalHours = allRecords.reduce((sum, item) => sum + item.hours, 0);
-
-      let replyText = `✅ บันทึกชั่วโมงจิตอาสาสำเร็จ!\n\n` +
-                        `👤 ชื่อ: ${name}\n` +
-                        `🆔 รหัส: ${studentId}\n` +
-                        `🏛 คณะ: ${facultyName}\n` +
-                        `📌 กิจกรรม: ${activityName}\n` +
-                        `⏱ บันทึกเพิ่ม: ${hours} ชั่วโมง\n` +
-                        `📊 ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
-
-      if (imageUrl) {
-        replyText += `\n📷 แนบรูปภาพหลักฐานเรียบร้อยแล้ว`;
-      } else {
-        replyText += `\n⚠️ (บันทึกโดยไม่มีรูปภาพหลักฐาน)`;
-      }
-
-      return replyTextMsg(event.replyToken, replyText);
-
-    } catch (error) {
-      console.error('Error saving to DB:', error);
-      return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง');
-    }
-  }
-
-  // 3. ข้อความแนะนำการใช้งาน
-  const helpText = `👋 ยินดีต้อนรับสู่ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
-                   `📌 ขั้นตอนการใช้งาน:\n` +
-                   `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
-                   `2️⃣ พิมพ์บันทึกชั่วโมงตามรูปแบบ:\n` +
-                   `บันทึก <รหัสคณะ> <รหัสประจำตัว> <ชื่อ-นามสกุล> <ชั่วโมง> <ชื่อกิจกรรม>\n\n` +
-                   `🏛 รหัสคณะ:\n` +
-                   `01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n` +
-                   `02 = คณะบริหารธุรกิจและศิลปศาสตร์\n` +
-                   `03 = คณะวิศวกรรมศาสตร์\n\n` +
-                   `💡 ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n` +
-                   `🔍 เช็คชั่วโมงสะสม:\n` +
-                   `พิมพ์: เช็คชั่วโมง <รหัสนักศึกษา>`;
-
-  return replyTextMsg(event.replyToken, helpText);
-}
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server เปิดทำงานแล้วที่ Port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
