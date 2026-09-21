@@ -93,7 +93,8 @@ app.get('/api/admin/records', async (req, res) => {
     const records = await Volunteer.find().sort({ date: -1 });
     res.json({ success: true, data: records });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error in /api/admin/records:', error);
+    res.status(500).json({ success: false, error: error.message, data: [] });
   }
 });
 
@@ -147,7 +148,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้า Admin Dashboard (เชื่อมโยงข้อมูลจริงครบถ้วน)
+// 3. หน้า Admin Dashboard
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -187,7 +188,6 @@ app.get('/admin', (req, res) => {
           min-height: 100vh;
         }
 
-        /* Sidebar Styling */
         .sidebar {
           width: 240px;
           background-color: var(--sidebar-bg);
@@ -244,7 +244,6 @@ app.get('/admin', (req, res) => {
           text-transform: uppercase;
         }
 
-        /* Main Content */
         .main-wrapper {
           flex: 1;
           display: flex;
@@ -252,7 +251,6 @@ app.get('/admin', (req, res) => {
           overflow-y: auto;
         }
 
-        /* Top Bar */
         .top-bar {
           display: flex;
           justify-content: space-between;
@@ -303,7 +301,6 @@ app.get('/admin', (req, res) => {
           justify-content: center;
         }
 
-        /* Dashboard Grid Layout */
         .dashboard-content {
           padding: 0 32px 32px 32px;
         }
@@ -323,7 +320,6 @@ app.get('/admin', (req, res) => {
           margin-bottom: 12px;
         }
 
-        /* Stat Mini Cards */
         .stat-value {
           font-size: 1.5rem;
           font-weight: 700;
@@ -334,7 +330,6 @@ app.get('/admin', (req, res) => {
           margin-top: 8px;
         }
 
-        /* Table Area */
         .table-custom {
           width: 100%;
           font-size: 0.85rem;
@@ -360,7 +355,6 @@ app.get('/admin', (req, res) => {
           cursor: pointer;
         }
 
-        /* Custom Progress Bars for Right Side */
         .progress-item {
           margin-bottom: 14px;
         }
@@ -457,7 +451,7 @@ app.get('/admin', (req, res) => {
               <div class="col-12 col-lg-9">
                 <div class="row g-3">
                   
-                  <!-- Top Line Chart (Detailed Chart 01) -->
+                  <!-- Detailed Chart 01 -->
                   <div class="col-12">
                     <div class="card-custom">
                       <div class="card-title-custom">Detailed Chart 01 (แนวโน้มการบันทึกชั่วโมงย้อนหลัง 7 เดือน)</div>
@@ -574,31 +568,39 @@ app.get('/admin', (req, res) => {
 
       <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
       <script>
-        let allRecords = [];
-        let charts = {};
+        var allRecords = [];
+        var charts = {};
 
         async function loadData() {
           try {
-            const res = await fetch('/api/admin/records');
-            const result = await res.json();
-            if (result.success) {
+            var res = await fetch('/api/admin/records');
+            var result = await res.json();
+            if (result && result.success) {
               allRecords = result.data || [];
               updateDashboard(allRecords);
+            } else {
+              updateDashboard([]);
             }
           } catch (err) {
             console.error('Error fetching data:', err);
+            updateDashboard([]);
           }
         }
 
         function updateDashboard(data) {
-          // Stat Counters
-          const totalHours = data.reduce((sum, item) => sum + (Number(item.hours) || 0), 0);
-          const totalCount = data.length;
-          const uniqueStudents = new Set(data.map(item => item.studentId)).size;
+          var totalHours = 0;
+          var studentSet = new Set();
+
+          for (var i = 0; i < data.length; i++) {
+            totalHours += Number(data[i].hours) || 0;
+            if (data[i].studentId) {
+              studentSet.add(data[i].studentId);
+            }
+          }
 
           document.getElementById('totalHoursText').innerText = totalHours.toLocaleString();
-          document.getElementById('totalCountText').innerText = totalCount.toLocaleString();
-          document.getElementById('totalStudentsText').innerText = uniqueStudents.toLocaleString();
+          document.getElementById('totalCountText').innerText = data.length.toLocaleString();
+          document.getElementById('totalStudentsText').innerText = studentSet.size.toLocaleString();
 
           renderRecentTable(data);
           renderAverageProgress(data, totalHours);
@@ -606,7 +608,7 @@ app.get('/admin', (req, res) => {
         }
 
         function renderRecentTable(data) {
-          const tbody = document.getElementById('recentTbody');
+          var tbody = document.getElementById('recentTbody');
           tbody.innerHTML = '';
 
           if (!data || data.length === 0) {
@@ -614,12 +616,14 @@ app.get('/admin', (req, res) => {
             return;
           }
 
-          data.slice(0, 15).forEach(item => {
-            const imgHtml = item.imageUrl 
+          var sliceData = data.slice(0, 15);
+          for (var i = 0; i < sliceData.length; i++) {
+            var item = sliceData[i];
+            var imgHtml = item.imageUrl 
               ? '<img src="' + item.imageUrl + '" class="img-thumb" onclick="showModal(\'' + item.imageUrl + '\')">'
               : '<span class="text-muted" style="font-size:10px;">ไม่มีรูป</span>';
 
-            const tr = document.createElement('tr');
+            var tr = document.createElement('tr');
             tr.innerHTML = '<td>' + imgHtml + '</td>' +
               '<td>' +
                 '<div style="font-weight:600; font-size:0.8rem;">' + (item.name || 'ไม่ระบุชื่อ') + '</div>' +
@@ -627,15 +631,11 @@ app.get('/admin', (req, res) => {
               '</td>' +
               '<td><span class="badge bg-success-subtle text-success">+' + (item.hours || 0) + '</span></td>';
             tbody.appendChild(tr);
-          });
+          }
         }
 
         function renderAverageProgress(data, totalHours) {
-          const container = document.getElementById('avgChartsContainer');
-          const loading = document.getElementById('avgChartsLoading');
-          if (loading) loading.remove();
-
-          // เคลียร์อันเก่าออกเหลือแต่ Title
+          var container = document.getElementById('avgChartsContainer');
           container.innerHTML = '<div class="card-title-custom">Average Charts (สัดส่วนตามคณะ)</div>';
 
           if (!data || data.length === 0 || totalHours === 0) {
@@ -643,64 +643,62 @@ app.get('/admin', (req, res) => {
             return;
           }
 
-          const facultyHours = { '01': 0, '02': 0, '03': 0, 'other': 0 };
-          data.forEach(item => {
-            const code = item.facultyCode;
+          var facultyHours = { '01': 0, '02': 0, '03': 0, 'other': 0 };
+          for (var i = 0; i < data.length; i++) {
+            var code = data[i].facultyCode;
+            var h = Number(data[i].hours) || 0;
             if (facultyHours[code] !== undefined) {
-              facultyHours[code] += (Number(item.hours) || 0);
+              facultyHours[code] += h;
             } else {
-              facultyHours['other'] += (Number(item.hours) || 0);
+              facultyHours['other'] += h;
             }
-          });
+          }
 
-          const items = [
+          var items = [
             { name: 'คณะวิทยาศาสตร์ฯ (01)', hours: facultyHours['01'], bg: 'bg-danger' },
             { name: 'คณะบริหารธุรกิจฯ (02)', hours: facultyHours['02'], bg: 'bg-primary' },
             { name: 'คณะวิศวกรรมศาสตร์ (03)', hours: facultyHours['03'], bg: 'bg-warning' },
             { name: 'คณะอื่นๆ', hours: facultyHours['other'], bg: 'bg-success' }
           ];
 
-          items.forEach(item => {
-            const percent = totalHours > 0 ? Math.round((item.hours / totalHours) * 100) : 0;
-            const html = \`
-              <div class="progress-item">
-                <div class="progress-label"><span>\${item.name}</span><span>\${percent}%</span></div>
-                <div class="progress"><div class="progress-bar \${item.bg} progress-bar-custom" style="width: \${percent}%"></div></div>
-              </div>
-            \`;
+          for (var j = 0; j < items.length; j++) {
+            var item = items[j];
+            var percent = totalHours > 0 ? Math.round((item.hours / totalHours) * 100) : 0;
+            var html = '<div class="progress-item">' +
+                '<div class="progress-label"><span>' + item.name + '</span><span>' + percent + '%</span></div>' +
+                '<div class="progress"><div class="progress-bar ' + item.bg + ' progress-bar-custom" style="width: ' + percent + '%"></div></div>' +
+              '</div>';
             container.innerHTML += html;
-          });
+          }
         }
 
         function initCharts(data, totalHours) {
-          // 1. คำนวณชั่วโมงย้อนหลัง 7 เดือนสำหรับ Main Line Chart
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const today = new Date();
-          const labelsMonth = [];
-          const monthDataMap = {};
+          var monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          var today = new Date();
+          var labelsMonth = [];
+          var monthDataMap = {};
 
-          for (let i = 6; i >= 0; i--) {
-            const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-            const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-            const label = monthNames[d.getMonth()];
-            labelsMonth.push(label);
+          for (var i = 6; i >= 0; i--) {
+            var d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+            var key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+            labelsMonth.push(monthNames[d.getMonth()]);
             monthDataMap[key] = 0;
           }
 
-          data.forEach(item => {
-            if (item.date) {
-              const d = new Date(item.date);
-              const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+          for (var k = 0; k < data.length; k++) {
+            if (data[k].date) {
+              var d = new Date(data[k].date);
+              var key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
               if (monthDataMap[key] !== undefined) {
-                monthDataMap[key] += (Number(item.hours) || 0);
+                monthDataMap[key] += (Number(data[k].hours) || 0);
               }
             }
-          });
+          }
 
-          const lineChartValues = Object.values(monthDataMap);
+          var lineChartValues = Object.values(monthDataMap);
 
           if (charts.mainLine) charts.mainLine.destroy();
-          const ctxLine = document.getElementById('mainLineChart').getContext('2d');
+          var ctxLine = document.getElementById('mainLineChart').getContext('2d');
           charts.mainLine = new Chart(ctxLine, {
             type: 'line',
             data: {
@@ -723,21 +721,23 @@ app.get('/admin', (req, res) => {
             }
           });
 
-          // 2. Mini Area Charts (สร้างจากข้อมูลจริง)
-          const recentValues = data.slice(0, 6).map(i => Number(i.hours) || 0).reverse();
-          const defaultData = recentValues.length > 0 ? recentValues : [0, 0, 0, 0, 0, 0];
+          var recentValues = [];
+          for (var m = 0; m < Math.min(6, data.length); m++) {
+            recentValues.push(Number(data[m].hours) || 0);
+          }
+          recentValues.reverse();
+          var defaultData = recentValues.length > 0 ? recentValues : [0, 0, 0, 0, 0, 0];
           
           createMiniChart('miniChart1', defaultData, '#0088ff');
           createMiniChart('miniChart2', defaultData, '#ffaa00');
           createMiniChart('miniChart3', defaultData, '#00cc88');
 
-          // 3. Donut Chart (คำนวณจากเป้าหมายสมมติ 1,000 ชั่วโมง)
-          const targetGoal = 1000;
-          const targetPercent = Math.min(100, Math.round((totalHours / targetGoal) * 100));
+          var targetGoal = 1000;
+          var targetPercent = Math.min(100, Math.round((totalHours / targetGoal) * 100));
           document.getElementById('donutPercentText').innerText = targetPercent + '%';
 
           if (charts.donut) charts.donut.destroy();
-          const ctxDonut = document.getElementById('donutChart').getContext('2d');
+          var ctxDonut = document.getElementById('donutChart').getContext('2d');
           charts.donut = new Chart(ctxDonut, {
             type: 'doughnut',
             data: {
@@ -755,19 +755,19 @@ app.get('/admin', (req, res) => {
             }
           });
 
-          // 4. Bar Chart (Detailed Chart 02 - แยกตามคณะจริง)
-          const facultyHours = { '01': 0, '02': 0, '03': 0, 'other': 0 };
-          data.forEach(item => {
-            const code = item.facultyCode;
+          var facultyHours = { '01': 0, '02': 0, '03': 0, 'other': 0 };
+          for (var n = 0; n < data.length; n++) {
+            var code = data[n].facultyCode;
+            var h = Number(data[n].hours) || 0;
             if (facultyHours[code] !== undefined) {
-              facultyHours[code] += (Number(item.hours) || 0);
+              facultyHours[code] += h;
             } else {
-              facultyHours['other'] += (Number(item.hours) || 0);
+              facultyHours['other'] += h;
             }
-          });
+          }
 
           if (charts.bar) charts.bar.destroy();
-          const ctxBar = document.getElementById('barChart').getContext('2d');
+          var ctxBar = document.getElementById('barChart').getContext('2d');
           charts.bar = new Chart(ctxBar, {
             type: 'bar',
             data: {
@@ -789,11 +789,11 @@ app.get('/admin', (req, res) => {
 
         function createMiniChart(id, data, color) {
           if (charts[id]) charts[id].destroy();
-          const ctx = document.getElementById(id).getContext('2d');
+          var ctx = document.getElementById(id).getContext('2d');
           charts[id] = new Chart(ctx, {
             type: 'line',
             data: {
-              labels: data.map((_, i) => i),
+              labels: data.map(function(_, i) { return i; }),
               datasets: [{
                 data: data,
                 borderColor: color,
@@ -818,16 +818,18 @@ app.get('/admin', (req, res) => {
         }
 
         function filterData() {
-          const searchText = document.getElementById('searchInput').value.toLowerCase();
-          const filtered = allRecords.filter(item => 
-            (item.studentId && item.studentId.toLowerCase().includes(searchText)) ||
-            (item.name && item.name.toLowerCase().includes(searchText))
-          );
+          var searchText = document.getElementById('searchInput').value.toLowerCase();
+          var filtered = allRecords.filter(function(item) {
+            return (item.studentId && item.studentId.toLowerCase().indexOf(searchText) !== -1) ||
+                   (item.name && item.name.toLowerCase().indexOf(searchText) !== -1);
+          });
           renderRecentTable(filtered);
         }
 
         window.onload = function() {
-          lucide.createIcons();
+          if (window.lucide) {
+            lucide.createIcons();
+          }
           loadData();
         };
       </script>
