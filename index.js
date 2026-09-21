@@ -32,12 +32,11 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-// Messaging API Client (สำหรับส่งข้อความ)
+// Messaging API Client
 const client = line.messagingApi 
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: config.channelAccessToken })
   : new line.Client(config);
 
-// Messaging API Blob Client (สำหรับดึงไฟล์รูปภาพใน SDK v8+)
 const blobClient = line.messagingApi 
   ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
   : client;
@@ -85,7 +84,7 @@ const tempImageSchema = new mongoose.Schema({
 const TempImage = mongoose.model('TempImage', tempImageSchema);
 
 // ==========================================
-// 👑 ADMIN DASHBOARD & API
+// 👑 ADMIN DASHBOARD & REST API
 // ==========================================
 
 // 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
@@ -98,7 +97,49 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. Export Excel
+// 2. API แก้ไขข้อมูลรายการจิตอาสา
+app.put('/api/admin/records/:id', async (req, res) => {
+  try {
+    const { facultyCode, studentId, name, hours, activityName } = req.body;
+    const facultyName = FACULTY_MAP[facultyCode] || 'ไม่ระบุคณะ';
+
+    const updatedRecord = await Volunteer.findByIdAndUpdate(
+      req.params.id,
+      {
+        facultyCode,
+        facultyName,
+        studentId,
+        name,
+        hours: Number(hours),
+        activityName
+      },
+      { new: true }
+    );
+
+    if (!updatedRecord) {
+      return res.status(404).json({ success: false, message: 'ไม่พบรายการที่ต้องการแก้ไข' });
+    }
+
+    res.json({ success: true, data: updatedRecord });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. API ลบรายการจิตอาสา
+app.delete('/api/admin/records/:id', async (req, res) => {
+  try {
+    const deletedRecord = await Volunteer.findByIdAndDelete(req.params.id);
+    if (!deletedRecord) {
+      return res.status(404).json({ success: false, message: 'ไม่พบรายการที่ต้องการลบ' });
+    }
+    res.json({ success: true, message: 'ลบรายการสำเร็จ' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 4. Export Excel
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -148,7 +189,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้า Admin Dashboard สไตล์ Modern UI
+// 5. หน้า Admin Dashboard สไตล์ Modern UI + Charts + Edit Support
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -160,10 +201,11 @@ app.get('/admin', (req, res) => {
       <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
       <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
       <script src="https://unpkg.com/lucide@latest"></script>
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
       <style>
         :root {
-          --bg-body: #f4f6f9;
-          --card-border-color: #e9ecef;
+          --bg-body: #f8fafc;
+          --card-border-color: #e2e8f0;
           --primary-color: #4f46e5;
           --primary-hover: #4338ca;
         }
@@ -182,11 +224,7 @@ app.get('/admin', (req, res) => {
         .card {
           border: 1px solid var(--card-border-color);
           border-radius: 16px;
-          box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-          transition: all 0.2s ease;
-        }
-
-        .stat-card {
+          box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.02);
           background: #ffffff;
         }
 
@@ -199,18 +237,13 @@ app.get('/admin', (req, res) => {
           justify-content: center;
         }
 
-        .table-card {
-          background: #ffffff;
-          overflow: hidden;
-        }
-
         .table > :not(caption) > * > * {
           padding: 1rem 1.25rem;
           border-bottom-color: #f1f5f9;
         }
 
         .table thead th {
-          font-size: 0.8rem;
+          font-size: 0.75rem;
           text-transform: uppercase;
           letter-spacing: 0.05em;
           color: #64748b;
@@ -254,11 +287,6 @@ app.get('/admin', (req, res) => {
           padding: 0.6rem 1rem;
         }
 
-        .search-box .form-control:focus, .search-box .form-select:focus {
-          border-color: var(--primary-color);
-          box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
-        }
-
         .btn-custom-primary {
           background-color: var(--primary-color);
           color: white;
@@ -270,6 +298,12 @@ app.get('/admin', (req, res) => {
         .btn-custom-primary:hover {
           background-color: var(--primary-hover);
           color: white;
+        }
+
+        .chart-container {
+          position: relative;
+          height: 260px;
+          width: 100%;
         }
       </style>
     </head>
@@ -300,7 +334,7 @@ app.get('/admin', (req, res) => {
         <!-- Stat Cards Summary -->
         <div class="row g-3 mb-4">
           <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
+            <div class="card p-3">
               <div class="d-flex align-items-center justify-content-between">
                 <div>
                   <div class="text-muted small fw-medium mb-1">จำนวนการบันทึกทั้งหมด</div>
@@ -313,7 +347,7 @@ app.get('/admin', (req, res) => {
             </div>
           </div>
           <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
+            <div class="card p-3">
               <div class="d-flex align-items-center justify-content-between">
                 <div>
                   <div class="text-muted small fw-medium mb-1">ชั่วโมงสะสมรวมทั้งหมด</div>
@@ -326,7 +360,7 @@ app.get('/admin', (req, res) => {
             </div>
           </div>
           <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
+            <div class="card p-3">
               <div class="d-flex align-items-center justify-content-between">
                 <div>
                   <div class="text-muted small fw-medium mb-1">นักศึกษาที่เข้าร่วม</div>
@@ -335,6 +369,30 @@ app.get('/admin', (req, res) => {
                 <div class="stat-icon bg-warning-subtle text-warning">
                   <i data-lucide="users"></i>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Analytics Charts -->
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-lg-5">
+            <div class="card p-3 h-100">
+              <div class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
+                <i data-lucide="pie-chart" style="width:18px;" class="text-primary"></i> สัดส่วนชั่วโมงสะสมตามคณะ
+              </div>
+              <div class="chart-container d-flex justify-content-center align-items-center">
+                <canvas id="facultyChart"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-7">
+            <div class="card p-3 h-100">
+              <div class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
+                <i data-lucide="bar-chart-3" style="width:18px;" class="text-primary"></i> Top 5 นักศึกษาที่มีชั่วโมงจิตอาหาสะสมสูงสุด
+              </div>
+              <div class="chart-container">
+                <canvas id="topStudentsChart"></canvas>
               </div>
             </div>
           </div>
@@ -363,7 +421,7 @@ app.get('/admin', (req, res) => {
         </div>
 
         <!-- Data Table -->
-        <div class="card table-card">
+        <div class="card overflow-hidden">
           <div class="table-responsive">
             <table class="table align-middle mb-0">
               <thead>
@@ -374,10 +432,11 @@ app.get('/admin', (req, res) => {
                   <th>ชื่อกิจกรรม</th>
                   <th>ชั่วโมง</th>
                   <th>วันที่บันทึก</th>
+                  <th class="text-end">จัดการ</th>
                 </tr>
               </thead>
               <tbody id="recordTableBody">
-                <tr><td colspan="6" class="text-center py-5 text-muted">กำลังโหลดข้อมูล...</td></tr>
+                <tr><td colspan="7" class="text-center py-5 text-muted">กำลังโหลดข้อมูล...</td></tr>
               </tbody>
             </table>
           </div>
@@ -396,9 +455,56 @@ app.get('/admin', (req, res) => {
         </div>
       </div>
 
+      <!-- Modal แก้ไขข้อมูล -->
+      <div class="modal fade" id="editModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content border-0 shadow">
+            <div class="modal-header">
+              <h5 class="modal-title fw-bold">✏️ แก้ไขรายการจิตอาสา</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <form id="editForm">
+                <input type="hidden" id="editRecordId">
+                <div class="mb-3">
+                  <label class="form-label small fw-bold text-muted">คณะ</label>
+                  <select id="editFacultyCode" class="form-select" required>
+                    <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
+                    <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
+                    <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-bold text-muted">รหัสนักศึกษา</label>
+                  <input type="text" id="editStudentId" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-bold text-muted">ชื่อ-นามสกุล</label>
+                  <input type="text" id="editName" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-bold text-muted">ชื่อกิจกรรม</label>
+                  <input type="text" id="editActivityName" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-bold text-muted">จำนวนชั่วโมง</label>
+                  <input type="number" step="0.5" id="editHours" class="form-control" required min="0.5">
+                </div>
+              </form>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-light" data-bs-dismiss="modal">ยกเลิก</button>
+              <button type="button" class="btn btn-custom-primary" onclick="submitEdit()">บันทึกการเปลี่ยนแปลง</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
       <script>
         let allRecords = [];
+        let facultyChartInstance = null;
+        let topStudentsChartInstance = null;
 
         async function loadData() {
           try {
@@ -407,6 +513,7 @@ app.get('/admin', (req, res) => {
             if (result.success) {
               allRecords = result.data;
               updateStats(allRecords);
+              renderCharts(allRecords);
               renderData(allRecords);
             }
           } catch (err) {
@@ -424,12 +531,79 @@ app.get('/admin', (req, res) => {
           document.getElementById('statStudents').innerText = uniqueStudents.toLocaleString();
         }
 
+        function renderCharts(data) {
+          // 1. Chart ชั่วโมงแยกตามคณะ
+          const facultyHours = { '01': 0, '02': 0, '03': 0, 'อื่นๆ': 0 };
+          data.forEach(item => {
+            if (facultyHours[item.facultyCode] !== undefined) {
+              facultyHours[item.facultyCode] += item.hours || 0;
+            } else {
+              facultyHours['อื่นๆ'] += item.hours || 0;
+            }
+          });
+
+          const facultyCtx = document.getElementById('facultyChart').getContext('2d');
+          if (facultyChartInstance) facultyChartInstance.destroy();
+
+          facultyChartInstance = new Chart(facultyCtx, {
+            type: 'doughnut',
+            data: {
+              labels: ['วิทยาศาสตร์ฯ (01)', 'บริหารธุรกิจฯ (02)', 'วิศวกรรมศาสตร์ (03)', 'อื่นๆ'],
+              datasets: [{
+                data: [facultyHours['01'], facultyHours['02'], facultyHours['03'], facultyHours['อื่นๆ']],
+                backgroundColor: ['#10b981', '#6366f1', '#f59e0b', '#94a3b8']
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom' } }
+            }
+          });
+
+          // 2. Chart Top 5 นักศึกษาที่มีชั่วโมงรวมสูงสุด
+          const studentMap = {};
+          data.forEach(item => {
+            const key = item.studentId;
+            if (!studentMap[key]) {
+              studentMap[key] = { name: item.name || item.studentId, hours: 0 };
+            }
+            studentMap[key].hours += item.hours || 0;
+          });
+
+          const sortedStudents = Object.values(studentMap)
+            .sort((a, b) => b.hours - a.hours)
+            .slice(0, 5);
+
+          const studentCtx = document.getElementById('topStudentsChart').getContext('2d');
+          if (topStudentsChartInstance) topStudentsChartInstance.destroy();
+
+          topStudentsChartInstance = new Chart(studentCtx, {
+            type: 'bar',
+            data: {
+              labels: sortedStudents.map(s => s.name.length > 15 ? s.name.substring(0, 15) + '...' : s.name),
+              datasets: [{
+                label: 'ชั่วโมงจิตอาหาสะสม',
+                data: sortedStudents.map(s => s.hours),
+                backgroundColor: '#4f46e5',
+                borderRadius: 8
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: { y: { beginAtZero: true } },
+              plugins: { legend: { display: false } }
+            }
+          });
+        }
+
         function renderData(data) {
           const tbody = document.getElementById('recordTableBody');
           tbody.innerHTML = '';
 
           if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted">ไม่พบข้อมูลบันทึก</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted">ไม่พบข้อมูลบันทึก</td></tr>';
             return;
           }
 
@@ -445,29 +619,37 @@ app.get('/admin', (req, res) => {
             const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 
             const imgHtml = item.imageUrl 
-              ? \`<img src="\${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('\${item.imageUrl}')">\`
-              : \`<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>\`;
+              ? `<img src="${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('${item.imageUrl}')">`
+              : `<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>`;
 
             const facultyClass = facultyColors[item.facultyCode] || 'bg-light text-dark';
             const facultyBadge = item.facultyCode 
-              ? \`<span class="badge badge-faculty border \${facultyClass}">[\${item.facultyCode}] \${item.facultyName || ''}</span>\`
-              : \`<span class="text-muted small">ไม่ระบุ</span>\`;
+              ? `<span class="badge badge-faculty border ${facultyClass}">[${item.facultyCode}]${item.facultyName || ''}</span>`
+              : `<span class="text-muted small">ไม่ระบุ</span>`;
 
             const tr = document.createElement('tr');
-            tr.innerHTML = \`
-              <td>\${imgHtml}</td>
+            tr.innerHTML = `
+              <td>${imgHtml}</td>
               <td>
-                <div class="fw-bold text-dark">\${item.name || 'ไม่ระบุชื่อ'}</div>
-                <div class="text-muted small">🆔 \${item.studentId}</div>
+                <div class="fw-bold text-dark">${item.name || 'ไม่ระบุชื่อ'}</div>
+                <div class="text-muted small">🆔 ${item.studentId}</div>
               </td>
-              <td>\${facultyBadge}</td>
-              <td><div class="fw-medium text-dark">\${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
-              <td><span class="badge badge-hours">+\${item.hours} ชม.</span></td>
+              <td>${facultyBadge}</td>
+              <td><div class="fw-medium text-dark">${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
+              <td><span class="badge badge-hours">+${item.hours} ชม.</span></td>
               <td>
-                <div class="small fw-medium text-dark">\${dateStr}</div>
-                <div class="text-muted" style="font-size: 11px;">\${timeStr} น.</div>
+                <div class="small fw-medium text-dark">${dateStr}</div>
+                <div class="text-muted" style="font-size: 11px;">${timeStr} น.</div>
               </td>
-            \`;
+              <td class="text-end">
+                <button class="btn btn-sm btn-light text-primary me-1" onclick='openEditModal(${JSON.stringify(item)})'>
+                  <i data-lucide="edit-3" style="width:16px;"></i>
+                </button>
+                <button class="btn btn-sm btn-light text-danger" onclick="deleteRecord('${item._id}')">
+                  <i data-lucide="trash-2" style="width:16px;"></i>
+                </button>
+              </td>
+            `;
             tbody.appendChild(tr);
           });
 
@@ -477,6 +659,62 @@ app.get('/admin', (req, res) => {
         function showModal(url) {
           document.getElementById('modalImg').src = url;
           new bootstrap.Modal(document.getElementById('imageModal')).show();
+        }
+
+        function openEditModal(item) {
+          document.getElementById('editRecordId').value = item._id;
+          document.getElementById('editFacultyCode').value = item.facultyCode || '01';
+          document.getElementById('editStudentId').value = item.studentId || '';
+          document.getElementById('editName').value = item.name || '';
+          document.getElementById('editActivityName').value = item.activityName || '';
+          document.getElementById('editHours').value = item.hours || 0;
+
+          new bootstrap.Modal(document.getElementById('editModal')).show();
+        }
+
+        async function submitEdit() {
+          const id = document.getElementById('editRecordId').value;
+          const payload = {
+            facultyCode: document.getElementById('editFacultyCode').value,
+            studentId: document.getElementById('editStudentId').value,
+            name: document.getElementById('editName').value,
+            activityName: document.getElementById('editActivityName').value,
+            hours: document.getElementById('editHours').value
+          };
+
+          try {
+            const res = await fetch(`/api/admin/records/${id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            const result = await res.json();
+            if (result.success) {
+              bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+              loadData();
+            } else {
+              alert('เกิดข้อผิดพลาด: ' + result.message);
+            }
+          } catch (err) {
+            alert('ไม่สามารถอัปเดตข้อมูลได้');
+          }
+        }
+
+        async function deleteRecord(id) {
+          if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?')) return;
+
+          try {
+            const res = await fetch(`/api/admin/records/${id}`, { method: 'DELETE' });
+            const result = await res.json();
+            if (result.success) {
+              loadData();
+            } else {
+              alert('เกิดข้อผิดพลาด: ' + result.message);
+            }
+          } catch (err) {
+            alert('ไม่สามารถลบรายการได้');
+          }
         }
 
         function filterTable() {
