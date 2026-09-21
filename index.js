@@ -1,49 +1,79 @@
 require('dotenv').config();
-
-// บังคับให้ Node.js ใช้ Google DNS
-const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']);
-
 const express = require('express');
-const line = require('@line/bot-sdk');
+const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
-const path = require('path');
-const ExcelJS = require('exceljs');
+const line = require('@line/bot-sdk');
 const cloudinary = require('cloudinary').v2;
+const ExcelJS = require('exceljs');
+const path = require('path');
 
-// 🔑 ตั้งค่า Cloudinary
+const app = express();
+
+// ==========================================
+// 1. CONFIGURATIONS
+// ==========================================
+
+// LINE Bot Configuration
+const lineConfig = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || 'YOUR_CHANNEL_ACCESS_TOKEN',
+  channelSecret: process.env.LINE_CHANNEL_SECRET || 'YOUR_CHANNEL_SECRET'
+};
+
+const client = new line.Client(lineConfig);
+
+// Cloudinary Configuration
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'ao9yrwpm',
   api_key: process.env.CLOUDINARY_API_KEY || '999874921286948',
   api_secret: process.env.CLOUDINARY_API_SECRET || 'Kyk5Mk1qlZ2uQ-Vt9QMJOtUr46M'
 });
 
-// 🏛️ ตารางแปลงรหัสคณะเป็นชื่อคณะ
-const FACULTY_MAP = {
-  '01': 'คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร',
-  '02': 'คณะบริหารธุรกิจและศิลปศาสตร์',
-  '03': 'คณะวิศวกรรมศาสตร์'
-};
+// MongoDB Connection
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://admin:1234@cluster0.abcde.mongodb.net/volunteer_db?retryWrites=true&w=majority';
+mongoose.connect(MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('Connected to MongoDB successfully!'))
+.catch(err => console.error('MongoDB connection error:', err));
 
-const app = express();
 
-const config = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET,
-};
+// ==========================================
+// 2. MONGOOSE SCHEMAS & MODELS
+// ==========================================
 
-// Messaging API Client (สำหรับส่งข้อความ)
-const client = line.messagingApi 
-  ? new line.messagingApi.MessagingApiClient({ channelAccessToken: config.channelAccessToken })
-  : new line.Client(config);
+// Main Volunteer Schema
+const volunteerSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  displayName: String,
+  pictureUrl: String,
+  studentId: { type: String, required: true },
+  fullName: { type: String, required: true },
+  activityName: { type: String, required: true },
+  hours: { type: Number, required: true },
+  imageUrl: { type: String, required: true },
+  status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  createdAt: { type: Date, default: Date.now }
+});
 
-// Messaging API Blob Client (สำหรับดึงไฟล์รูปภาพใน SDK v8+)
-const blobClient = line.messagingApi 
-  ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
-  : client;
+const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
-// Webhook LINE
-app.post('/webhook', line.middleware(config), (req, res) => {
+// Temp Image Schema for 2-Step Registration (TTL 30 mins)
+const tempImageSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  imageUrl: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now, expires: 1800 }
+});
+
+const TempImage = mongoose.model('TempImage', tempImageSchema);
+
+
+// ==========================================
+// 3. MIDDLEWARES & BODY PARSERS
+// ==========================================
+app.use(express.static('public'));
+
+app.post('/webhook', line.middleware(lineConfig), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => {
@@ -52,903 +82,753 @@ app.post('/webhook', line.middleware(config), (req, res) => {
     });
 });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
-// เชื่อมต่อ MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!'))
-  .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
-
-// Schema สำหรับเก็บข้อมูลจิตอาสา
-const volunteerSchema = new mongoose.Schema({
-  userId: String,
-  facultyCode: String,
-  facultyName: String,
-  studentId: String,
-  name: { type: String, default: 'ไม่ระบุชื่อ' },
-  hours: Number,
-  activityName: { type: String, default: 'ไม่ระบุกิจกรรม' },
-  imageUrl: { type: String, default: '' },
-  date: { type: Date, default: Date.now }
-});
-
-const Volunteer = mongoose.model('Volunteer', volunteerSchema);
-
-// Schema สำหรับเก็บรูปภาพชั่วคราว
-const tempImageSchema = new mongoose.Schema({
-  userId: String,
-  imageUrl: String,
-  createdAt: { type: Date, default: Date.now, expires: 1800 }
-});
-
-const TempImage = mongoose.model('TempImage', tempImageSchema);
 
 // ==========================================
-// 👑 ADMIN DASHBOARD & API
+// 4. LINE BOT EVENT HANDLER
+// ==========================================
+async function handleEvent(event) {
+  if (event.type !== 'message') {
+    return Promise.resolve(null);
+  }
+
+  const userId = event.source.userId;
+
+  // Handle Image Upload
+  if (event.message.type === 'image') {
+    try {
+      const stream = await client.getMessageContent(event.message.id);
+      
+      const uploadPromise = new Promise((resolve, reject) => {
+        const cloudStream = cloudinary.uploader.upload_stream(
+          { folder: 'line_volunteer' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        );
+        stream.pipe(cloudStream);
+      });
+
+      const result = await uploadPromise;
+      const imageUrl = result.secure_url;
+
+      await TempImage.findOneAndUpdate(
+        { userId: userId },
+        { imageUrl: imageUrl, createdAt: new Date() },
+        { upsert: true, new: true }
+      );
+
+      const replyText = `ได้รับรูปภาพกิจกรรมแล้วครับ! 📸\n\nกรุณาส่งข้อมูลตามรูปแบบนี้เพื่อบันทึกจิตอาสา:\n\n[รหัสนักศึกษา] [ชื่อ-นามสกุล] [ชื่อกิจกรรม] [จำนวนชั่วโมง]\n\nตัวอย่าง:\n65011234 นายสมชาย ใจดี กวาดลานวัด 3`;
+      return client.replyMessage(event.replyToken, { type: 'text', text: replyText });
+
+    } catch (err) {
+      console.error('Error handling image:', err);
+      return client.replyMessage(event.replyToken, { 
+        type: 'text', 
+        text: 'เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ กรุณาลองใหม่อีกครั้งครับ' 
+      });
+    }
+  }
+
+  // Handle Text Message
+  if (event.message.type === 'text') {
+    const text = event.message.text.trim();
+    
+    if (text === 'วิธีใช้งาน' || text === 'ช่วยเหลือ' || text === 'help') {
+      const helpText = `📌 วิธีการบันทึกชั่วโมงจิตอาสา:\n1. ส่ง "รูปภาพ" กิจกรรมจิตอาสาเข้ามาในแชท\n2. ส่ง "ข้อความ" ระบุข้อมูลตามรูปแบบนี้:\n   [รหัสนักศึกษา] [ชื่อ-นามสกุล] [ชื่อกิจกรรม] [จำนวนชั่วโมง]\n\nตัวอย่าง:\n65011234 นายสมชาย ใจดี กวาดลานวัด 3`;
+      return client.replyMessage(event.replyToken, { type: 'text', text: helpText });
+    }
+
+    const tempImg = await TempImage.findOne({ userId: userId });
+    if (!tempImg) {
+      return client.replyMessage(event.replyToken, { 
+        type: 'text', 
+        text: '⚠️ ไม่พบรูปภาพกิจกรรมที่ส่งมาก่อนหน้า กรุณาส่ง "รูปภาพกิจกรรม" เข้ามาก่อนส่งข้อความบันทึกครับ' 
+      });
+    }
+
+    const parts = text.split(/\s+/);
+    if (parts.length < 4) {
+      return client.replyMessage(event.replyToken, { 
+        type: 'text', 
+        text: '⚠️ รูปแบบข้อความไม่ถูกต้อง กรุณากรอกให้ครบถ้วน:\n[รหัสนักศึกษา] [ชื่อ-นามสกุล] [ชื่อกิจกรรม] [จำนวนชั่วโมง]\n\nตัวอย่าง:\n65011234 นายสมชาย ใจดี กวาดลานวัด 3' 
+      });
+    }
+
+    const studentId = parts[0];
+    const hoursStr = parts[parts.length - 1];
+    const hours = parseFloat(hoursStr);
+
+    if (isNaN(hours) || hours <= 0) {
+      return client.replyMessage(event.replyToken, { 
+        type: 'text', 
+        text: '⚠️ จำนวนชั่วโมงต้องเป็นตัวเลขที่มากกว่า 0 ครับ' 
+      });
+    }
+
+    const fullName = parts[1];
+    const activityName = parts.slice(2, parts.length - 1).join(' ');
+
+    let profile = { displayName: 'LINE User', pictureUrl: '' };
+    try {
+      profile = await client.getProfile(userId);
+    } catch (e) {
+      console.log('Could not fetch user profile:', e.message);
+    }
+
+    const newRecord = new Volunteer({
+      userId: userId,
+      displayName: profile.displayName,
+      pictureUrl: profile.pictureUrl,
+      studentId: studentId,
+      fullName: fullName,
+      activityName: activityName,
+      hours: hours,
+      imageUrl: tempImg.imageUrl,
+      status: 'pending'
+    });
+
+    await newRecord.save();
+    await TempImage.deleteOne({ userId: userId });
+
+    const successMessage = `✅ บันทึกข้อมูลจิตอาสาเรียบร้อยแล้ว!\n\n👤 รหัสนักศึกษา: ${studentId}\n🏷️ ชื่อ-นามสกุล: ${fullName}\n📌 กิจกรรม: ${activityName}\n⏳ จำนวน: ${hours} ชั่วโมง\n\nSTATUS: ⏳ รอการอนุมัติจากเจ้าหน้าที่`;
+    return client.replyMessage(event.replyToken, { type: 'text', text: successMessage });
+  }
+
+  return Promise.resolve(null);
+}
+
+
+// ==========================================
+// 5. ADMIN DASHBOARD REST APIs
 // ==========================================
 
-// 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
-app.get('/api/admin/records', async (req, res) => {
+// Get All Volunteers List
+app.get('/api/admin/volunteers', async (req, res) => {
   try {
-    const records = await Volunteer.find().sort({ date: -1 });
-    res.json({ success: true, data: records });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const list = await Volunteer.find().sort({ createdAt: -1 });
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 2. API แก้ไขข้อมูลรายการบันทึก (เพิ่มใหม่)
-app.put('/api/admin/records/:id', async (req, res) => {
+// Update Record Status / Data
+app.put('/api/admin/volunteers/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { facultyCode, studentId, name, hours, activityName } = req.body;
-
-    const facultyName = FACULTY_MAP[facultyCode] || 'ไม่ระบุคณะ';
-
-    const updatedRecord = await Volunteer.findByIdAndUpdate(
-      id,
-      {
-        facultyCode,
-        facultyName,
-        studentId,
-        name,
-        hours: Number(hours),
-        activityName
-      },
-      { new: true }
-    );
-
-    if (!updatedRecord) {
-      return res.status(404).json({ success: false, message: 'ไม่พบรายการที่ต้องการแก้ไข' });
-    }
-
-    res.json({ success: true, message: 'อัปเดตข้อมูลสำเร็จ', data: updatedRecord });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const updated = await Volunteer.findByIdAndUpdate(id, req.body, { new: true });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 3. API ลบรายการบันทึก (เพิ่มใหม่)
-app.delete('/api/admin/records/:id', async (req, res) => {
+// Delete Record
+app.delete('/api/admin/volunteers/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const deletedRecord = await Volunteer.findByIdAndDelete(id);
-
-    if (!deletedRecord) {
-      return res.status(404).json({ success: false, message: 'ไม่พบรายการที่ต้องการลบ' });
-    }
-
-    res.json({ success: true, message: 'ลบข้อมูลสำเร็จ' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    await Volunteer.findByIdAndDelete(id);
+    res.json({ message: 'Deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 4. Export Excel
-app.get('/admin/export-excel', async (req, res) => {
+// Export Excel API
+app.get('/api/admin/export', async (req, res) => {
   try {
-    const records = await Volunteer.find().sort({ date: -1 });
+    const records = await Volunteer.find().sort({ createdAt: -1 });
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('รายงานชั่วโมงจิตอาสา');
+    const worksheet = workbook.addWorksheet('Volunteer Records');
 
     worksheet.columns = [
-      { header: 'รหัสคณะ', key: 'facultyCode', width: 12 },
-      { header: 'ชื่อคณะ', key: 'facultyName', width: 35 },
-      { header: 'รหัสนักศึกษา', key: 'studentId', width: 20 },
-      { header: 'ชื่อ-นามสกุล', key: 'name', width: 25 },
-      { header: 'ชื่อกิจกรรม', key: 'activityName', width: 30 },
-      { header: 'ชั่วโมงที่บันทึก', key: 'hours', width: 15 },
-      { header: 'วันที่บันทึก', key: 'date', width: 22 },
-      { header: 'ลิงก์รูปภาพหลักฐาน', key: 'imageUrl', width: 45 }
+      { header: 'วันที่บันทึก', key: 'createdAt', width: 20 },
+      { header: 'รหัสนักศึกษา', key: 'studentId', width: 15 },
+      { header: 'ชื่อ-นามสกุล', key: 'fullName', width: 25 },
+      { header: 'กิจกรรม', key: 'activityName', width: 30 },
+      { header: 'จำนวนชั่วโมง', key: 'hours', width: 12 },
+      { header: 'สถานะ', key: 'status', width: 12 },
+      { header: 'ลิงก์รูปภาพ', key: 'imageUrl', width: 45 }
     ];
 
-    worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'DDEBF7' }
-    };
-
-    records.forEach(v => {
+    records.forEach(r => {
       worksheet.addRow({
-        facultyCode: v.facultyCode || '-',
-        facultyName: v.facultyName || 'ไม่ระบุคณะ',
-        studentId: v.studentId,
-        name: v.name || 'ไม่ระบุชื่อ',
-        activityName: v.activityName || 'ไม่ระบุกิจกรรม',
-        hours: v.hours,
-        date: v.date ? new Date(v.date).toLocaleString('th-TH') : '-',
-        imageUrl: v.imageUrl || 'ไม่มีรูปภาพ'
+        createdAt: new Date(r.createdAt).toLocaleString('th-TH'),
+        studentId: r.studentId,
+        fullName: r.fullName,
+        activityName: r.activityName,
+        hours: r.hours,
+        status: r.status === 'approved' ? 'อนุมัติ' : r.status === 'rejected' ? 'ปฏิเสธ' : 'รอตรวจสอบ',
+        imageUrl: r.imageUrl
       });
     });
 
+    worksheet.getRow(1).font = { bold: true };
+    
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=Volunteer_Hours_Report.xlsx');
+    res.setHeader('Content-Disposition', 'attachment; filename=volunteer_records.xlsx');
 
     await workbook.xlsx.write(res);
     res.end();
-  } catch (error) {
-    console.error('Error exporting Excel:', error);
-    res.status(500).send('เกิดข้อผิดพลาดในการสร้างไฟล์ Excel');
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 5. หน้า Admin Dashboard สไตล์ Modern Pro UI + Visual Analytics + Complete CRUD
+
+// ==========================================
+// 6. ADMIN DASHBOARD FRONTEND ROUTE
+// ==========================================
 app.get('/admin', (req, res) => {
   res.send(`
-    <!DOCTYPE html>
-    <html lang="th">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Volunteer Pro Admin Dashboard</title>
-      
-      <!-- Typography & UI Frameworks -->
-      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-      <script src="https://unpkg.com/lucide@latest"></script>
-      <!-- Chart.js -->
-      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบจัดการจิตอาสา - Admin Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: 'Prompt', sans-serif; background-color: #f4f6f9; color: #333; }
+    .navbar { background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); }
+    .card { border-radius: 12px; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); transition: 0.3s; }
+    .stat-card { border-left: 5px solid; }
+    .stat-card.primary { border-color: #0d6efd; }
+    .stat-card.warning { border-color: #ffc107; }
+    .stat-card.success { border-color: #198754; }
+    .stat-card.danger { border-color: #dc3545; }
+    .table-img { width: 45px; height: 45px; object-fit: cover; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+    .table-img:hover { transform: scale(1.1); }
+    .student-link { text-decoration: none; font-weight: 600; color: #0d6efd; cursor: pointer; }
+    .student-link:hover { text-decoration: underline; color: #0a58ca; }
+    .chart-container { position: relative; height: 260px; width: 100%; }
+    .avatar-lg { width: 70px; height: 70px; object-fit: cover; border-radius: 50%; border: 3px solid #0d6efd; }
+  </style>
+</head>
+<body>
 
-      <style>
-        :root {
-          --bg-main: #f8fafc;
-          --border-color: #e2e8f0;
-          --primary-color: #4f46e5;
-          --primary-hover: #4338ca;
-          --card-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.03), 0 4px 6px -4px rgba(15, 23, 42, 0.02);
-        }
+  <nav class="navbar navbar-dark mb-4">
+    <div class="container-fluid px-4">
+      <span class="navbar-brand mb-0 h1"><i class="fa-solid fa-hand-holding-heart me-2"></i> ระบบจัดการจิตอาสา Admin Dashboard</span>
+      <a href="/api/admin/export" class="btn btn-light btn-sm fw-bold"><i class="fa-solid fa-file-excel text-success me-1"></i> Export Excel</a>
+    </div>
+  </nav>
 
-        body {
-          font-family: 'Sarabun', 'Plus Jakarta Sans', sans-serif;
-          background-color: var(--bg-main);
-          color: #1e293b;
-        }
+  <div class="container-fluid px-4">
 
-        .navbar {
-          background: rgba(255, 255, 255, 0.85);
-          backdrop-filter: blur(12px);
-          border-bottom: 1px solid var(--border-color);
-        }
-
-        .brand-icon {
-          width: 40px;
-          height: 40px;
-          background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-          color: white;
-          border-radius: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
-        }
-
-        .card {
-          border: 1px solid var(--border-color);
-          border-radius: 20px;
-          box-shadow: var(--card-shadow);
-          background: #ffffff;
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .stat-card:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 12px 20px -5px rgba(15, 23, 42, 0.08);
-        }
-
-        .stat-icon {
-          width: 52px;
-          height: 52px;
-          border-radius: 14px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .table-card {
-          overflow: hidden;
-        }
-
-        .table > :not(caption) > * > * {
-          padding: 1rem 1.25rem;
-          border-bottom-color: #f1f5f9;
-        }
-
-        .table thead th {
-          font-size: 0.75rem;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          color: #64748b;
-          font-weight: 700;
-          background-color: #f8fafc;
-        }
-
-        .img-thumb {
-          width: 46px;
-          height: 46px;
-          object-fit: cover;
-          border-radius: 12px;
-          cursor: pointer;
-          border: 1px solid #e2e8f0;
-          transition: transform 0.2s ease;
-        }
-
-        .img-thumb:hover {
-          transform: scale(1.1);
-        }
-
-        .badge-faculty {
-          font-size: 0.75rem;
-          padding: 0.4em 0.8em;
-          border-radius: 8px;
-          font-weight: 600;
-        }
-
-        .badge-hours {
-          background-color: #ecfdf5;
-          color: #047857;
-          border: 1px solid #a7f3d0;
-          font-weight: 700;
-          padding: 0.4em 0.8em;
-          border-radius: 30px;
-        }
-
-        .btn-action {
-          width: 34px;
-          height: 34px;
-          padding: 0;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 8px;
-        }
-
-        .chart-container {
-          position: relative;
-          height: 260px;
-          width: 100%;
-        }
-
-        .modal-content {
-          border-radius: 20px;
-          border: none;
-          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-        }
-      </style>
-    </head>
-    <body>
-
-      <!-- Navbar -->
-      <nav class="navbar navbar-expand-lg sticky-top py-3">
-        <div class="container-fluid px-4">
-          <a class="navbar-brand d-flex align-items-center gap-3 fw-bold text-dark" href="#">
-            <div class="brand-icon">
-              <i data-lucide="heart-handshake" style="width:22px;"></i>
-            </div>
+    <!-- KPI Cards -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-3">
+        <div class="card stat-card primary p-3">
+          <div class="d-flex justify-content-between align-items-center">
             <div>
-              <div class="fs-5 lh-1">Volunteer Admin</div>
-              <span class="text-muted fw-normal" style="font-size:0.75rem;">ระบบจัดการชั่วโมงจิตอาสา</span>
+              <div class="text-muted small">กิจกรรมทั้งหมด</div>
+              <h3 class="mb-0 fw-bold" id="kpi-total">0</h3>
             </div>
-          </a>
-          <div class="d-flex gap-2">
-            <a href="/admin/export-excel" class="btn btn-outline-success d-flex align-items-center gap-2 px-3" style="border-radius:12px; font-weight:500;">
-              <i data-lucide="file-spreadsheet" style="width:18px;"></i> Export Excel
-            </a>
-            <button class="btn btn-primary d-flex align-items-center gap-2 px-3" style="border-radius:12px; background:var(--primary-color); font-weight:500;" onclick="loadData()">
-              <i data-lucide="refresh-cw" style="width:18px;"></i> รีเฟรช
-            </button>
+            <i class="fa-solid fa-list-check fa-2x text-primary opacity-50"></i>
           </div>
         </div>
-      </nav>
-
-      <div class="container-fluid px-4 py-4">
-        
-        <!-- Summary Cards -->
-        <div class="row g-3 mb-4">
-          <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
-              <div class="d-flex align-items-center justify-content-between">
-                <div>
-                  <div class="text-muted small fw-semibold mb-1">จำนวนการบันทึกทั้งหมด</div>
-                  <h2 class="fw-bold mb-0 text-dark" id="statCount">0</h2>
-                </div>
-                <div class="stat-icon bg-primary-subtle text-primary">
-                  <i data-lucide="clipboard-list" style="width:26px; height:26px;"></i>
-                </div>
-              </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card stat-card warning p-3">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <div class="text-muted small">รอตรวจสอบ</div>
+              <h3 class="mb-0 fw-bold text-warning" id="kpi-pending">0</h3>
             </div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
-              <div class="d-flex align-items-center justify-content-between">
-                <div>
-                  <div class="text-muted small fw-semibold mb-1">ชั่วโมงสะสมรวมทั้งหมด</div>
-                  <h2 class="fw-bold mb-0 text-success" id="statHours">0 <small class="fs-6">ชม.</small></h2>
-                </div>
-                <div class="stat-icon bg-success-subtle text-success">
-                  <i data-lucide="clock" style="width:26px; height:26px;"></i>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="card stat-card p-3">
-              <div class="d-flex align-items-center justify-content-between">
-                <div>
-                  <div class="text-muted small fw-semibold mb-1">นักศึกษาที่เข้าร่วม</div>
-                  <h2 class="fw-bold mb-0 text-indigo" id="statStudents">0 <small class="fs-6">คน</small></h2>
-                </div>
-                <div class="stat-icon bg-warning-subtle text-warning">
-                  <i data-lucide="users" style="width:26px; height:26px;"></i>
-                </div>
-              </div>
-            </div>
+            <i class="fa-solid fa-clock fa-2x text-warning opacity-50"></i>
           </div>
         </div>
-
-        <!-- Charts Section -->
-        <div class="row g-3 mb-4">
-          <div class="col-12 col-lg-7">
-            <div class="card p-3">
-              <h6 class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
-                <i data-lucide="bar-chart-3" class="text-primary" style="width:18px;"></i> สรุปชั่วโมงจำแนกตามคณะ
-              </h6>
-              <div class="chart-container">
-                <canvas id="facultyChart"></canvas>
-              </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card stat-card success p-3">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <div class="text-muted small">อนุมัติแล้ว</div>
+              <h3 class="mb-0 fw-bold text-success" id="kpi-approved">0</h3>
             </div>
-          </div>
-          <div class="col-12 col-lg-5">
-            <div class="card p-3">
-              <h6 class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
-                <i data-lucide="pie-chart" class="text-primary" style="width:18px;"></i> สัดส่วนจำนวนครั้งการเข้าร่วม
-              </h6>
-              <div class="chart-container">
-                <canvas id="ratioChart"></canvas>
-              </div>
-            </div>
+            <i class="fa-solid fa-circle-check fa-2x text-success opacity-50"></i>
           </div>
         </div>
-
-        <!-- Filter & Search Box -->
-        <div class="card p-3 mb-4">
-          <div class="row g-3">
-            <div class="col-12 col-md-8">
-              <div class="input-group">
-                <span class="input-group-text bg-white border-end-0 pe-0" style="border-radius: 12px 0 0 12px; border-color: #cbd5e1;">
-                  <i data-lucide="search" class="text-muted" style="width:18px;"></i>
-                </span>
-                <input type="text" id="searchInput" class="form-control border-start-0" style="border-radius: 0 12px 12px 0; border-color: #cbd5e1;" placeholder="ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล หรือกิจกรรม..." onkeyup="filterTable()">
-              </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card stat-card danger p-3">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <div class="text-muted small">ชั่วโมงอนุมัติรวม</div>
+              <h3 class="mb-0 fw-bold text-danger" id="kpi-hours">0</h3>
             </div>
-            <div class="col-12 col-md-4">
-              <select id="facultyFilter" class="form-select" style="border-radius: 12px; border-color: #cbd5e1;" onchange="filterTable()">
-                <option value="">🏛️ แสดงทุกคณะ</option>
-                <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
-                <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
-                <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
-              </select>
-            </div>
+            <i class="fa-solid fa-hourglass-half fa-2x text-danger opacity-50"></i>
           </div>
         </div>
+      </div>
+    </div>
 
-        <!-- Data Table -->
-        <div class="card table-card">
+    <!-- Modern Compact Charts Row -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-4">
+        <div class="card p-3 h-100">
+          <h6 class="fw-bold mb-3"><i class="fa-solid fa-chart-pie me-2 text-primary"></i>สัดส่วนสถานะการอนุมัติ</h6>
+          <div class="chart-container">
+            <canvas id="statusChart"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-8">
+        <div class="card p-3 h-100">
+          <h6 class="fw-bold mb-3"><i class="fa-solid fa-chart-column me-2 text-success"></i>สถิติจิตอาสาแยกตามวัน</h6>
+          <div class="chart-container">
+            <canvas id="dailyChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data Table Card -->
+    <div class="card p-3 mb-5">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 gap-2">
+        <h5 class="fw-bold mb-0"><i class="fa-solid fa-table me-2"></i>รายการบันทึกจิตอาสา</h5>
+        <div class="d-flex gap-2">
+          <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="ค้นหา รหัส / ชื่อ / กิจกรรม..." onkeyup="filterData()">
+          <select id="statusFilter" class="form-select form-select-sm" style="width: 150px;" onchange="filterData()">
+            <option value="all">สถานะทั้งหมด</option>
+            <option value="pending">รอตรวจสอบ</option>
+            <option value="approved">อนุมัติแล้ว</option>
+            <option value="rejected">ปฏิเสธ</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-hover align-middle" id="volunteerTable">
+          <thead class="table-light">
+            <tr>
+              <th>รูปกิจกรรม</th>
+              <th>รหัสนักศึกษา</th>
+              <th>ชื่อ-นามสกุล</th>
+              <th>กิจกรรม</th>
+              <th>ชั่วโมง</th>
+              <th>วันที่บันทึก</th>
+              <th>สถานะ</th>
+              <th class="text-center">จัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <!-- Data Rows Loaded via JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Modal 1: ดูรายละเอียดประวัตินักศึกษารายบุคคล (NEW) -->
+  <div class="modal fade" id="studentDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title fw-bold"><i class="fa-solid fa-id-card me-2"></i>ข้อมูลประวัติติตอาสารายบุคคล</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-4">
+          <div class="d-flex align-items-center gap-3 mb-4 p-3 bg-light rounded-3">
+            <img id="detailAvatar" src="https://via.placeholder.com/70" class="avatar-lg" alt="Profile">
+            <div>
+              <h4 class="mb-1 fw-bold" id="detailFullName">-</h4>
+              <p class="mb-0 text-muted">รหัสนักศึกษา: <span id="detailStudentId" class="fw-semibold text-dark">-</span></p>
+            </div>
+            <div class="ms-auto text-end bg-white p-3 rounded-3 shadow-sm border">
+              <span class="text-muted small d-block">ชั่วโมงอนุมัติรวม</span>
+              <span class="h3 fw-bold text-success mb-0" id="detailTotalHours">0</span>
+              <span class="small text-muted"> ชม.</span>
+            </div>
+          </div>
+
+          <h6 class="fw-bold mb-3"><i class="fa-solid fa-history me-2 text-primary"></i>ประวัติการบันทึกกิจกรรมทั้งหมด</h6>
           <div class="table-responsive">
-            <table class="table align-middle mb-0">
-              <thead>
+            <table class="table table-bordered align-middle">
+              <thead class="table-light">
                 <tr>
-                  <th>หลักฐาน</th>
-                  <th>ข้อมูลนักศึกษา</th>
-                  <th>คณะ</th>
+                  <th style="width: 70px;">รูปภาพ</th>
                   <th>ชื่อกิจกรรม</th>
-                  <th>ชั่วโมง</th>
-                  <th>วันที่บันทึก</th>
-                  <th class="text-end">จัดการ</th>
+                  <th class="text-center" style="width: 90px;">ชั่วโมง</th>
+                  <th style="width: 140px;">วันที่บันทึก</th>
+                  <th class="text-center" style="width: 110px;">สถานะ</th>
                 </tr>
               </thead>
-              <tbody id="recordTableBody">
-                <tr><td colspan="7" class="text-center py-5 text-muted">กำลังโหลดข้อมูล...</td></tr>
+              <tbody id="studentHistoryBody">
+                <!-- History Rows -->
               </tbody>
             </table>
           </div>
         </div>
-
-      </div>
-
-      <!-- Modal ขยายรูป -->
-      <div class="modal fade" id="imageModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-          <div class="modal-content border-0 bg-transparent">
-            <div class="modal-body text-center p-0">
-              <img id="modalImg" src="" class="img-fluid rounded-4 shadow-lg" alt="รูปหลักฐาน">
-            </div>
-          </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิดหน้าต่าง</button>
         </div>
       </div>
+    </div>
+  </div>
 
-      <!-- Modal แก้ไขข้อมูล -->
-      <div class="modal fade" id="editModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-          <div class="modal-content p-2">
-            <div class="modal-header border-0 pb-0">
-              <h5 class="modal-header-title fw-bold">✏️ แก้ไขข้อมูลบันทึกจิตอาสา</h5>
-              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-              <form id="editForm">
-                <input type="hidden" id="editId">
-                <div class="mb-3">
-                  <label class="form-label text-muted small fw-bold">คณะ</label>
-                  <select id="editFacultyCode" class="form-select" required style="border-radius:10px;">
-                    <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
-                    <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
-                    <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
-                  </select>
-                </div>
-                <div class="mb-3">
-                  <label class="form-label text-muted small fw-bold">รหัสนักศึกษา</label>
-                  <input type="text" id="editStudentId" class="form-control" required style="border-radius:10px;">
-                </div>
-                <div class="mb-3">
-                  <label class="form-label text-muted small fw-bold">ชื่อ-นามสกุล</label>
-                  <input type="text" id="editName" class="form-control" required style="border-radius:10px;">
-                </div>
-                <div class="mb-3">
-                  <label class="form-label text-muted small fw-bold">จำนวนชั่วโมง</label>
-                  <input type="number" id="editHours" class="form-control" min="0.5" step="0.5" required style="border-radius:10px;">
-                </div>
-                <div class="mb-3">
-                  <label class="form-label text-muted small fw-bold">ชื่อกิจกรรม</label>
-                  <input type="text" id="editActivityName" class="form-control" required style="border-radius:10px;">
-                </div>
-                <div class="d-flex justify-content-end gap-2 pt-2">
-                  <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="border-radius:10px;">ยกเลิก</button>
-                  <button type="submit" class="btn btn-primary" style="border-radius:10px; background:var(--primary-color);">บันทึกการเปลี่ยนแปลง</button>
-                </div>
-              </form>
-            </div>
-          </div>
+  <!-- Modal 2: ดูรูปภาพขยาย -->
+  <div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-body text-center p-2">
+          <img id="modalImage" src="" class="img-fluid rounded" alt="Full Image">
         </div>
       </div>
+    </div>
+  </div>
 
-      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-      <script>
-        let allRecords = [];
-        let facultyChart = null;
-        let ratioChart = null;
+  <!-- Modal 3: แก้ไขข้อมูล -->
+  <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold">แก้ไขข้อมูลการบันทึก</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="editForm">
+            <input type="hidden" id="editId">
+            <div class="mb-3">
+              <label class="form-label">รหัสนักศึกษา</label>
+              <input type="text" id="editStudentId" class="form-control" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">ชื่อ-นามสกุล</label>
+              <input type="text" id="editFullName" class="form-control" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">ชื่อกิจกรรม</label>
+              <input type="text" id="editActivityName" class="form-control" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">จำนวนชั่วโมง</label>
+              <input type="number" id="editHours" class="form-control" step="0.5" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">สถานะ</label>
+              <select id="editStatus" class="form-select">
+                <option value="pending">รอตรวจสอบ</option>
+                <option value="approved">อนุมัติ</option>
+                <option value="rejected">ปฏิเสธ</option>
+              </select>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+          <button type="button" class="btn btn-primary" onclick="saveEdit()">บันทึกการเปลี่ยนแปลง</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
-        async function loadData() {
-          try {
-            const res = await fetch('/api/admin/records');
-            const result = await res.json();
-            if (result.success) {
-              allRecords = result.data;
-              updateStats(allRecords);
-              renderCharts(allRecords);
-              renderData(allRecords);
-            }
-          } catch (err) {
-            alert('ไม่สามารถดึงข้อมูลได้');
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    let rawData = [];
+    let statusChartInstance = null;
+    let dailyChartInstance = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      fetchData();
+    });
+
+    async function fetchData() {
+      try {
+        const res = await fetch('/api/admin/volunteers');
+        rawData = await res.json();
+        renderKPIs(rawData);
+        renderCharts(rawData);
+        renderTable(rawData);
+      } catch (err) {
+        console.error('Fetch data error:', err);
+      }
+    }
+
+    function renderKPIs(data) {
+      document.getElementById('kpi-total').innerText = data.length;
+      document.getElementById('kpi-pending').innerText = data.filter(d => d.status === 'pending').length;
+      document.getElementById('kpi-approved').innerText = data.filter(d => d.status === 'approved').length;
+      
+      const approvedHours = data
+        .filter(d => d.status === 'approved')
+        .reduce((sum, d) => sum + d.hours, 0);
+      document.getElementById('kpi-hours').innerText = approvedHours;
+    }
+
+    function renderCharts(data) {
+      // 1. Doughnut Chart (Status Distribution)
+      const pendingCount = data.filter(d => d.status === 'pending').length;
+      const approvedCount = data.filter(d => d.status === 'approved').length;
+      const rejectedCount = data.filter(d => d.status === 'rejected').length;
+
+      const ctxStatus = document.getElementById('statusChart').getContext('2d');
+      if (statusChartInstance) statusChartInstance.destroy();
+
+      statusChartInstance = new Chart(ctxStatus, {
+        type: 'doughnut',
+        data: {
+          labels: ['รอตรวจสอบ', 'อนุมัติแล้ว', 'ปฏิเสธ'],
+          datasets: [{
+            data: [pendingCount, approvedCount, rejectedCount],
+            backgroundColor: ['#ffc107', '#198754', '#dc3545'],
+            borderWidth: 2,
+            hoverOffset: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 12, font: { family: 'Prompt' } } }
+          },
+          cutout: '70%'
+        }
+      });
+
+      // 2. Bar Chart (Daily Statistics - Modern Gradient)
+      const dailyMap = {};
+      data.forEach(d => {
+        const dateStr = new Date(d.createdAt).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit' });
+        dailyMap[dateStr] = (dailyMap[dateStr] || 0) + 1;
+      });
+
+      const dates = Object.keys(dailyMap).reverse().slice(-7);
+      const counts = dates.map(k => dailyMap[k]);
+
+      const ctxDaily = document.getElementById('dailyChart').getContext('2d');
+      if (dailyChartInstance) dailyChartInstance.destroy();
+
+      const gradient = ctxDaily.createLinearGradient(0, 0, 0, 200);
+      gradient.addColorStop(0, 'rgba(13, 110, 253, 0.85)');
+      gradient.addColorStop(1, 'rgba(13, 110, 253, 0.15)');
+
+      dailyChartInstance = new Chart(ctxDaily, {
+        type: 'bar',
+        data: {
+          labels: dates,
+          datasets: [{
+            label: 'จำนวนการบันทึก (รายการ)',
+            data: counts,
+            backgroundColor: gradient,
+            borderColor: '#0d6efd',
+            borderWidth: 1.5,
+            borderRadius: 6,
+            borderSkipped: false
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            y: { beginAtZero: true, ticks: { precision: 0, font: { family: 'Prompt' } }, grid: { borderDash: [4, 4] } },
+            x: { ticks: { font: { family: 'Prompt' } }, grid: { display: false } }
           }
         }
+      });
+    }
 
-        function updateStats(data) {
-          document.getElementById('statCount').innerText = data.length.toLocaleString();
-          
-          const totalHours = data.reduce((sum, item) => sum + (item.hours || 0), 0);
-          document.getElementById('statHours').innerText = totalHours.toLocaleString();
+    function renderTable(data) {
+      const tbody = document.getElementById('tableBody');
+      tbody.innerHTML = '';
 
-          const uniqueStudents = new Set(data.map(item => item.studentId)).size;
-          document.getElementById('statStudents').innerText = uniqueStudents.toLocaleString();
-        }
+      if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">ไม่พบข้อมูล</td></tr>';
+        return;
+      }
 
-        function renderCharts(data) {
-          const facultyHours = { '01': 0, '02': 0, '03': 0 };
-          const facultyCounts = { '01': 0, '02': 0, '03': 0 };
+      data.forEach(item => {
+        const dateStr = new Date(item.createdAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+        
+        let statusBadge = '<span class="badge bg-warning text-dark">รอตรวจสอบ</span>';
+        if (item.status === 'approved') statusBadge = '<span class="badge bg-success">อนุมัติแล้ว</span>';
+        if (item.status === 'rejected') statusBadge = '<span class="badge bg-danger">ปฏิเสธ</span>';
 
-          data.forEach(item => {
-            if (facultyHours[item.facultyCode] !== undefined) {
-              facultyHours[item.facultyCode] += (item.hours || 0);
-              facultyCounts[item.facultyCode] += 1;
-            }
-          });
+        const tr = document.createElement('tr');
+        tr.innerHTML = \`
+          <td>
+            <img src="\${item.imageUrl}" class="table-img" onclick="openImageModal('\${item.imageUrl}')" alt="กิจกรรม">
+          </td>
+          <td class="fw-semibold">\${item.studentId}</td>
+          <td>
+            <span class="student-link" onclick="openStudentModal('\${item.studentId}')">
+              <i class="fa-solid fa-user-graduate me-1"></i>\${item.fullName}
+            </span>
+          </td>
+          <td>\${item.activityName}</td>
+          <td class="fw-bold text-primary">\${item.hours}</td>
+          <td class="small text-muted">\${dateStr}</td>
+          <td>\${statusBadge}</td>
+          <td class="text-center">
+            <button class="btn btn-sm btn-outline-success me-1" onclick="updateStatus('\${item._id}', 'approved')" title="อนุมัติ"><i class="fa-solid fa-check"></i></button>
+            <button class="btn btn-sm btn-outline-danger me-1" onclick="updateStatus('\${item._id}', 'rejected')" title="ปฏิเสธ"><i class="fa-solid fa-xmark"></i></button>
+            <button class="btn btn-sm btn-outline-primary me-1" onclick="openEditModal('\${item._id}')" title="แก้ไข"><i class="fa-solid fa-pen"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="deleteRecord('\${item._id}')" title="ลบ"><i class="fa-solid fa-trash"></i></button>
+          </td>
+        \`;
+        tbody.appendChild(tr);
+      });
+    }
 
-          // 1. Bar Chart (ชั่วโมงรวมแต่ละคณะ)
-          const ctxBar = document.getElementById('facultyChart').getContext('2d');
-          if (facultyChart) facultyChart.destroy();
-          facultyChart = new Chart(ctxBar, {
-            type: 'bar',
-            data: {
-              labels: ['วิทยาศาสตร์ฯ (01)', 'บริหารธุรกิจฯ (02)', 'วิศวกรรมศาสตร์ (03)'],
-              datasets: [{
-                label: 'ชั่วโมงสะสม',
-                data: [facultyHours['01'], facultyHours['02'], facultyHours['03']],
-                backgroundColor: ['rgba(16, 185, 129, 0.85)', 'rgba(79, 70, 229, 0.85)', 'rgba(245, 158, 11, 0.85)'],
-                borderRadius: 8
-              }]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { display: false } },
-              scales: { y: { beginAtZero: true } }
-            }
-          });
+    function filterData() {
+      const searchText = document.getElementById('searchInput').value.toLowerCase();
+      const statusValue = document.getElementById('statusFilter').value;
 
-          // 2. Doughnut Chart (สัดส่วนจำนวนครั้ง)
-          const ctxDoughnut = document.getElementById('ratioChart').getContext('2d');
-          if (ratioChart) ratioChart.destroy();
-          ratioChart = new Chart(ctxDoughnut, {
-            type: 'doughnut',
-            data: {
-              labels: ['คณะ 01', 'คณะ 02', 'คณะ 03'],
-              datasets: [{
-                data: [facultyCounts['01'], facultyCounts['02'], facultyCounts['03']],
-                backgroundColor: ['#10b981', '#4f46e5', '#f59e0b']
-              }]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { position: 'bottom' } }
-            }
-          });
-        }
+      const filtered = rawData.filter(item => {
+        const matchSearch = item.studentId.toLowerCase().includes(searchText) ||
+                            item.fullName.toLowerCase().includes(searchText) ||
+                            item.activityName.toLowerCase().includes(searchText);
+        const matchStatus = statusValue === 'all' || item.status === statusValue;
+        return matchSearch && matchStatus;
+      });
 
-        function renderData(data) {
-          const tbody = document.getElementById('recordTableBody');
-          tbody.innerHTML = '';
+      renderTable(filtered);
+    }
 
-          if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted">ไม่พบข้อมูลบันทึก</td></tr>';
-            return;
-          }
+    // ==========================================
+    // NEW FUNCTION: Student Individual Detail Modal
+    // ==========================================
+    function openStudentModal(studentId) {
+      const studentRecords = rawData.filter(d => d.studentId === studentId);
+      if (studentRecords.length === 0) return;
 
-          const facultyColors = {
-            '01': 'bg-success-subtle text-success border-success-subtle',
-            '02': 'bg-primary-subtle text-primary border-primary-subtle',
-            '03': 'bg-warning-subtle text-warning-emphasis border-warning-subtle'
-          };
+      const studentInfo = studentRecords[0];
+      
+      document.getElementById('detailFullName').innerText = studentInfo.fullName;
+      document.getElementById('detailStudentId').innerText = studentInfo.studentId;
+      document.getElementById('detailAvatar').src = studentInfo.pictureUrl || 'https://via.placeholder.com/70?text=USER';
 
-          data.forEach(item => {
-            const dateObj = new Date(item.date);
-            const dateStr = dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
-            const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+      const totalApprovedHours = studentRecords
+        .filter(d => d.status === 'approved')
+        .reduce((sum, d) => sum + d.hours, 0);
+      
+      document.getElementById('detailTotalHours').innerText = totalApprovedHours;
 
-            const imgHtml = item.imageUrl 
-              ? `<img src="${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('${item.imageUrl}')">`
-              : `<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>`;
+      const historyBody = document.getElementById('studentHistoryBody');
+      historyBody.innerHTML = '';
 
-            const facultyClass = facultyColors[item.facultyCode] || 'bg-light text-dark';
-            const facultyBadge = item.facultyCode 
-              ? `<span class="badge badge-faculty border ${facultyClass}">[${item.facultyCode}]${item.facultyName || ''}</span>`
-              : `<span class="text-muted small">ไม่ระบุ</span>`;
+      studentRecords.forEach(item => {
+        const dateStr = new Date(item.createdAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+        
+        let statusBadge = '<span class="badge bg-warning text-dark">รอตรวจสอบ</span>';
+        if (item.status === 'approved') statusBadge = '<span class="badge bg-success">อนุมัติแล้ว</span>';
+        if (item.status === 'rejected') statusBadge = '<span class="badge bg-danger">ปฏิเสธ</span>';
 
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>${imgHtml}</td>
-              <td>
-                <div class="fw-bold text-dark">${item.name || 'ไม่ระบุชื่อ'}</div>
-                <div class="text-muted small">🆔 ${item.studentId}</div>
-              </td>
-              <td>${facultyBadge}</td>
-              <td><div class="fw-medium text-dark">${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
-              <td><span class="badge badge-hours">+${item.hours} ชม.</span></td>
-              <td>
-                <div class="small fw-medium text-dark">${dateStr}</div>
-                <div class="text-muted" style="font-size: 11px;">${timeStr} น.</div>
-              </td>
-              <td class="text-end">
-                <button class="btn btn-action btn-outline-primary me-1" onclick="openEditModal('${item._id}')" title="แก้ไข">
-                  <i data-lucide="edit-3" style="width:16px;"></i>
-                </button>
-                <button class="btn btn-action btn-outline-danger" onclick="deleteRecord('${item._id}')" title="ลบ">
-                  <i data-lucide="trash-2" style="width:16px;"></i>
-                </button>
-              </td>
-            `;
-            tbody.appendChild(tr);
-          });
+        const tr = document.createElement('tr');
+        tr.innerHTML = \`
+          <td class="text-center">
+            <img src="\${item.imageUrl}" class="table-img" onclick="openImageModal('\${item.imageUrl}')" alt="กิจกรรม">
+          </td>
+          <td>\${item.activityName}</td>
+          <td class="text-center fw-bold text-primary">\${item.hours}</td>
+          <td class="small text-muted">\${dateStr}</td>
+          <td class="text-center">\${statusBadge}</td>
+        \`;
+        historyBody.appendChild(tr);
+      });
 
-          lucide.createIcons();
-        }
+      const modal = new bootstrap.Modal(document.getElementById('studentDetailModal'));
+      modal.show();
+    }
 
-        function showModal(url) {
-          document.getElementById('modalImg').src = url;
-          new bootstrap.Modal(document.getElementById('imageModal')).show();
-        }
+    // Existing Helper Functions
+    function openImageModal(url) {
+      document.getElementById('modalImage').src = url;
+      const modal = new bootstrap.Modal(document.getElementById('imageModal'));
+      modal.show();
+    }
 
-        function openEditModal(id) {
-          const item = allRecords.find(r => r._id === id);
-          if (!item) return;
+    async function updateStatus(id, newStatus) {
+      try {
+        await fetch(\`/api/admin/volunteers/\${id}\`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus })
+        });
+        fetchData();
+      } catch (err) {
+        console.error('Update status error:', err);
+      }
+    }
 
-          document.getElementById('editId').value = item._id;
-          document.getElementById('editFacultyCode').value = item.facultyCode || '01';
-          document.getElementById('editStudentId').value = item.studentId || '';
-          document.getElementById('editName').value = item.name || '';
-          document.getElementById('editHours').value = item.hours || 0;
-          document.getElementById('editActivityName').value = item.activityName || '';
+    function openEditModal(id) {
+      const item = rawData.find(d => d._id === id);
+      if (!item) return;
 
-          new bootstrap.Modal(document.getElementById('editModal')).show();
-        }
+      document.getElementById('editId').value = item._id;
+      document.getElementById('editStudentId').value = item.studentId;
+      document.getElementById('editFullName').value = item.fullName;
+      document.getElementById('editActivityName').value = item.activityName;
+      document.getElementById('editHours').value = item.hours;
+      document.getElementById('editStatus').value = item.status;
 
-        document.getElementById('editForm').addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const id = document.getElementById('editId').value;
-          const payload = {
-            facultyCode: document.getElementById('editFacultyCode').value,
-            studentId: document.getElementById('editStudentId').value,
-            name: document.getElementById('editName').value,
-            hours: document.getElementById('editHours').value,
-            activityName: document.getElementById('editActivityName').value
-          };
+      const modal = new bootstrap.Modal(document.getElementById('editModal'));
+      modal.show();
+    }
 
-          try {
-            const res = await fetch(`/api/admin/records/${id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
-            const result = await res.json();
-            if (result.success) {
-              bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
-              loadData();
-            } else {
-              alert('แก้ไขไม่สำเร็จ: ' + result.message);
-            }
-          } catch (err) {
-            alert('เกิดข้อผิดพลาดในการส่งข้อมูล');
-          }
+    async function saveEdit() {
+      const id = document.getElementById('editId').value;
+      const payload = {
+        studentId: document.getElementById('editStudentId').value,
+        fullName: document.getElementById('editFullName').value,
+        activityName: document.getElementById('editActivityName').value,
+        hours: parseFloat(document.getElementById('editHours').value),
+        status: document.getElementById('editStatus').value
+      };
+
+      try {
+        await fetch(\`/api/admin/volunteers/\${id}\`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
         });
 
-        async function deleteRecord(id) {
-          if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?')) return;
+        const modalEl = document.getElementById('editModal');
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        modal.hide();
 
-          try {
-            const res = await fetch(`/api/admin/records/${id}`, { method: 'DELETE' });
-            const result = await res.json();
-            if (result.success) {
-              loadData();
-            } else {
-              alert('ลบไม่สำเร็จ: ' + result.message);
-            }
-          } catch (err) {
-            alert('เกิดข้อผิดพลาดในการลบข้อมูล');
-          }
-        }
+        fetchData();
+      } catch (err) {
+        console.error('Save edit error:', err);
+      }
+    }
 
-        function filterTable() {
-          const searchText = document.getElementById('searchInput').value.toLowerCase();
-          const selectedFaculty = document.getElementById('facultyFilter').value;
+    async function deleteRecord(id) {
+      if (!confirm('คุณแน่ใจหรือไม่ที่จะลบรายการนี้?')) return;
 
-          const filtered = allRecords.filter(item => {
-            const matchSearch = item.studentId.toLowerCase().includes(searchText) || 
-                                (item.name && item.name.toLowerCase().includes(searchText)) ||
-                                (item.facultyName && item.facultyName.toLowerCase().includes(searchText)) ||
-                                (item.activityName && item.activityName.toLowerCase().includes(searchText));
-            
-            const matchFaculty = selectedFaculty === '' || item.facultyCode === selectedFaculty;
-
-            return matchSearch && matchFaculty;
-          });
-
-          renderData(filtered);
-        }
-
-        loadData();
-      </script>
-    </body>
-    </html>
+      try {
+        await fetch(\`/api/admin/volunteers/\${id}\`, { method: 'DELETE' });
+        fetchData();
+      } catch (err) {
+        console.error('Delete error:', err);
+      }
+    }
+  </script>
+</body>
+</html>
   `);
 });
 
+
 // ==========================================
-// 💬 LINE BOT HANDLER
+// 7. SERVER START
 // ==========================================
-
-function replyTextMsg(replyToken, text) {
-  if (client.replyMessage && typeof client.replyMessage === 'function') {
-    return client.replyMessage({
-      replyToken: replyToken,
-      messages: [{ type: 'text', text }]
-    });
-  }
-  return client.replyMessage(replyToken, { type: 'text', text });
-}
-
-async function handleImageMessage(event) {
-  const userId = event.source.userId;
-  const messageId = event.message.id;
-
-  try {
-    const stream = await blobClient.getMessageContent(messageId);
-    
-    const chunks = [];
-    for await (const chunk of stream) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-    const base64Image = `data:image/jpeg;base64,${buffer.toString('base64')}`;
-
-    const uploadResult = await cloudinary.uploader.upload(base64Image, {
-      folder: 'volunteer_proofs'
-    });
-
-    const imageUrl = uploadResult.secure_url;
-
-    await TempImage.findOneAndUpdate(
-      { userId },
-      { imageUrl, createdAt: new Date() },
-      { upsert: true, new: true }
-    );
-
-    return replyTextMsg(
-      event.replyToken,
-      '📷 ได้รับรูปภาพหลักฐานเรียบร้อยแล้วครับ!\n\nกรุณาพิมพ์บันทึกชั่วโมงต่อได้เลย เช่น:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
-    );
-
-  } catch (error) {
-    console.error('Error handling image with Cloudinary:', error);
-    return replyTextMsg(event.replyToken, '❌ ไม่สามารถบันทึกรูปภาพได้ กรุณาลองส่งใหม่อีกครั้ง');
-  }
-}
-
-async function handleEvent(event) {
-  if (event.type === 'message' && event.message.type === 'image') {
-    return handleImageMessage(event);
-  }
-
-  if (event.type !== 'message' || event.message.type !== 'text') {
-    return Promise.resolve(null);
-  }
-
-  const userText = event.message.text.trim();
-  const userId = event.source.userId;
-
-  // 1. คำสั่ง "เช็คชั่วโมง"
-  if (userText.startsWith('เช็คชั่วโมง')) {
-    const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
-    const studentId = parts[1];
-
-    if (!studentId) {
-      return replyTextMsg(event.replyToken, '❌ กรุณาระบุรหัสนักศึกษา เช่น:\nเช็คชั่วโมง 6501234567');
-    }
-
-    try {
-      const records = await Volunteer.find({ studentId: studentId });
-
-      if (records.length === 0) {
-        return replyTextMsg(event.replyToken, `🔍 ไม่พบข้อมูลการบันทึกชั่วโมงของรหัส: ${studentId}`);
-      }
-
-      const totalHours = records.reduce((sum, item) => sum + item.hours, 0);
-      const validRecord = records.slice().reverse().find(r => r.name && r.name !== 'ไม่ระบุชื่อ');
-      const studentName = validRecord ? validRecord.name : (records[0].name || 'ไม่ระบุชื่อ');
-      const facultyName = validRecord ? (validRecord.facultyName || 'ไม่ระบุ') : 'ไม่ระบุ';
-
-      let detailsText = '';
-      records.forEach((r, idx) => {
-        const dateStr = r.date ? new Date(r.date).toLocaleDateString('th-TH') : '-';
-        detailsText += `\n${idx + 1}. ${r.activityName} (${r.hours} ชม.) - ${dateStr}`;
-      });
-
-      const replyText = `📊 สรุปชั่วโมงจิตอาสา\n\n` +
-                        `👤 ชื่อ: ${studentName}\n` +
-                        `🆔 รหัส: ${studentId}\n` +
-                        `🏛️ คณะ: ${facultyName}\n` +
-                        `⏱️ ชั่วโมงรวม: ${totalHours} ชั่วโมง\n` +
-                        `________________________\n` +
-                        `📜 ประวัติการบันทึก:${detailsText}`;
-
-      return replyTextMsg(event.replyToken, replyText);
-
-    } catch (error) {
-      console.error('Error fetching records:', error);
-      return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการดึงข้อมูล กรุณาลองใหม่อีกครั้ง');
-    }
-  }
-
-  // 2. คำสั่ง "บันทึก"
-  if (userText.startsWith('บันทึก')) {
-    // รูปแบบ: บันทึก [รหัสคณะ] [รหัสนักศึกษา] [ชื่อ-นามสกุล] [จำนวนชั่วโมง] [ชื่อกิจกรรม]
-    const match = userText.match(/^บันทึก\s+(\d{2})\s+(\d+)\s+(.+?)\s+(\d+(?:\.\d+)?)\s+(.+)$/);
-
-    if (!match) {
-      return replyTextMsg(
-        event.replyToken,
-        '❌ รูปแบบคำสั่งไม่ถูกต้อง!\n\n💡 กรุณาใช้รูปแบบดังนี้:\n' +
-        'บันทึก [รหัสคณะ] [รหัสนักศึกษา] [ชื่อ-นามสกุล] [ชั่วโมง] [ชื่อกิจกรรม]\n\n' +
-        '📌 ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n' +
-        '🏛️ รหัสคณะ:\n01 = วท.เกษตร\n02 = บริหารธุรกิจฯ\n03 = วิศวะฯ'
-      );
-    }
-
-    const [, facultyCode, studentId, name, hoursStr, activityName] = match;
-    const hours = parseFloat(hoursStr);
-    const facultyName = FACULTY_MAP[facultyCode] || 'ไม่ระบุคณะ';
-
-    try {
-      // ค้นหารูปภาพชั่วคราวของผู้ใช้
-      const tempImg = await TempImage.findOne({ userId });
-      const imageUrl = tempImg ? tempImg.imageUrl : '';
-
-      // บันทึกลงฐานข้อมูล
-      const newRecord = new Volunteer({
-        userId,
-        facultyCode,
-        facultyName,
-        studentId,
-        name,
-        hours,
-        activityName,
-        imageUrl,
-        date: new Date()
-      });
-
-      await newRecord.save();
-
-      // ลบรูปภาพชั่วคราวหลังบันทึกเสร็จ
-      if (tempImg) {
-        await TempImage.deleteOne({ userId });
-      }
-
-      const imgNotice = imageUrl ? '📷 แนบรูปหลักฐานแล้ว' : '⚠️ ไม่มีรูปหลักฐาน';
-
-      const replyText = `✅ บันทึกชั่วโมงจิตอาสาสำเร็จ!\n\n` +
-                        `👤 ชื่อ: ${name}\n` +
-                        `🆔 รหัส: ${studentId}\n` +
-                        `🏛️ คณะ: ${facultyName}\n` +
-                        `📌 กิจกรรม: ${activityName}\n` +
-                        `⏱️ ชั่วโมง: +${hours} ชม.\n` +
-                        `🖼️ สถานะรูป: ${imgNotice}\n\n` +
-                        `ขอบคุณสำหรับการทำดีครับ! 🙏`;
-
-      return replyTextMsg(event.replyToken, replyText);
-
-    } catch (error) {
-      console.error('Error saving record:', error);
-      return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง');
-    }
-  }
-
-  // คำสั่งอื่นๆ / ความช่วยเหลือ
-  const helpText = `🤖 สวัสดีครับ! ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
-                   `📌 วิธีใช้งาน:\n` +
-                   `1️⃣ ส่งรูปภาพหลักฐานกิจกรรมก่อน (ถ้ามี)\n` +
-                   `2️⃣ พิมพ์บันทึกข้อมูล เช่น:\n` +
-                   `   บันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n` +
-                   `📊 ตรวจสอบชั่วโมง พิมพ์:\n` +
-                   `   เช็คชั่วโมง 6501234567`;
-
-  return replyTextMsg(event.replyToken, helpText);
-}
-
-// ตั้งค่า Port และเริ่มรัน Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
+  console.log(`Admin Dashboard: http://localhost:${PORT}/admin`);
 });
