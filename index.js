@@ -147,7 +147,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้า Admin Dashboard (ดีไซน์ถอดแบบจากภาพที่ส่งมา)
+// 3. หน้า Admin Dashboard (เชื่อมโยงข้อมูลจริงครบถ้วน)
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -453,14 +453,14 @@ app.get('/admin', (req, res) => {
           <div class="dashboard-content">
             <div class="row g-3">
               
-              <!-- Left Grid (Center Layout ในภาพ) -->
+              <!-- Left Grid -->
               <div class="col-12 col-lg-9">
                 <div class="row g-3">
                   
                   <!-- Top Line Chart (Detailed Chart 01) -->
                   <div class="col-12">
                     <div class="card-custom">
-                      <div class="card-title-custom">Detailed Chart 01 (แนวโน้มการบันทึกชั่วโมง)</div>
+                      <div class="card-title-custom">Detailed Chart 01 (แนวโน้มการบันทึกชั่วโมงย้อนหลัง 7 เดือน)</div>
                       <div style="height: 180px;">
                         <canvas id="mainLineChart"></canvas>
                       </div>
@@ -501,10 +501,10 @@ app.get('/admin', (req, res) => {
                   <!-- Donut Chart & Bar Chart -->
                   <div class="col-12 col-md-4">
                     <div class="card-custom text-center">
-                      <div class="card-title-custom text-start">Profile Strength (ภาพรวมเป้าหมาย)</div>
+                      <div class="card-title-custom text-start">Profile Strength (% เป้าหมายภาพรวม)</div>
                       <div style="height: 140px; position: relative;" class="d-flex align-items-center justify-content-center">
                         <canvas id="donutChart"></canvas>
-                        <div style="position: absolute; font-weight:700; font-size:1.2rem;" id="donutPercentText">75%</div>
+                        <div style="position: absolute; font-weight:700; font-size:1.2rem;" id="donutPercentText">0%</div>
                       </div>
                     </div>
                   </div>
@@ -527,30 +527,15 @@ app.get('/admin', (req, res) => {
                   
                   <!-- Average Charts -->
                   <div class="col-12">
-                    <div class="card-custom">
-                      <div class="card-title-custom">Average Charts</div>
-                      <div class="progress-item">
-                        <div class="progress-label"><span>คณะวิทยาศาสตร์ฯ (01)</span><span>70%</span></div>
-                        <div class="progress"><div class="progress-bar bg-danger progress-bar-custom" style="width: 70%"></div></div>
-                      </div>
-                      <div class="progress-item">
-                        <div class="progress-label"><span>คณะบริหารธุรกิจฯ (02)</span><span>45%</span></div>
-                        <div class="progress"><div class="progress-bar bg-primary progress-bar-custom" style="width: 45%"></div></div>
-                      </div>
-                      <div class="progress-item">
-                        <div class="progress-label"><span>คณะวิศวกรรมศาสตร์ (03)</span><span>85%</span></div>
-                        <div class="progress"><div class="progress-bar bg-warning progress-bar-custom" style="width: 85%"></div></div>
-                      </div>
-                      <div class="progress-item">
-                        <div class="progress-label"><span>อื่นๆ</span><span>30%</span></div>
-                        <div class="progress"><div class="progress-bar bg-success progress-bar-custom" style="width: 30%"></div></div>
-                      </div>
+                    <div class="card-custom" id="avgChartsContainer">
+                      <div class="card-title-custom">Average Charts (สัดส่วนตามคณะ)</div>
+                      <div class="text-muted text-center py-3" id="avgChartsLoading">กำลังคำนวณ...</div>
                     </div>
                   </div>
 
                   <!-- Recently Activity / Record List -->
                   <div class="col-12">
-                    <div class="card-custom" style="max-height: 300px; overflow-y: auto;">
+                    <div class="card-custom" style="max-height: 350px; overflow-y: auto;">
                       <div class="card-title-custom">Recently Activity</div>
                       <table class="table-custom">
                         <thead>
@@ -561,7 +546,7 @@ app.get('/admin', (req, res) => {
                           </tr>
                         </thead>
                         <tbody id="recentTbody">
-                          <tr><td colspan="3" class="text-center text-muted">กำลังโหลด...</td></tr>
+                          <tr><td colspan="3" class="text-center text-muted">กำลังโหลดข้อมูล...</td></tr>
                         </tbody>
                       </table>
                     </div>
@@ -607,7 +592,7 @@ app.get('/admin', (req, res) => {
 
         function updateDashboard(data) {
           // Stat Counters
-          const totalHours = data.reduce((sum, item) => sum + (item.hours || 0), 0);
+          const totalHours = data.reduce((sum, item) => sum + (Number(item.hours) || 0), 0);
           const totalCount = data.length;
           const uniqueStudents = new Set(data.map(item => item.studentId)).size;
 
@@ -616,7 +601,8 @@ app.get('/admin', (req, res) => {
           document.getElementById('totalStudentsText').innerText = uniqueStudents.toLocaleString();
 
           renderRecentTable(data);
-          initCharts(data);
+          renderAverageProgress(data, totalHours);
+          initCharts(data, totalHours);
         }
 
         function renderRecentTable(data) {
@@ -624,11 +610,11 @@ app.get('/admin', (req, res) => {
           tbody.innerHTML = '';
 
           if (!data || data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">ไม่มีข้อมูล</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">ยังไม่มีข้อมูลการบันทึก</td></tr>';
             return;
           }
 
-          data.slice(0, 10).forEach(item => {
+          data.slice(0, 15).forEach(item => {
             const imgHtml = item.imageUrl 
               ? '<img src="' + item.imageUrl + '" class="img-thumb" onclick="showModal(\'' + item.imageUrl + '\')">'
               : '<span class="text-muted" style="font-size:10px;">ไม่มีรูป</span>';
@@ -637,28 +623,96 @@ app.get('/admin', (req, res) => {
             tr.innerHTML = '<td>' + imgHtml + '</td>' +
               '<td>' +
                 '<div style="font-weight:600; font-size:0.8rem;">' + (item.name || 'ไม่ระบุชื่อ') + '</div>' +
-                '<div style="font-size:0.7rem; color:#94a3b8;">' + (item.studentId || '-') + '</div>' +
+                '<div style="font-size:0.7rem; color:#94a3b8;">' + (item.activityName || item.studentId || '-') + '</div>' +
               '</td>' +
               '<td><span class="badge bg-success-subtle text-success">+' + (item.hours || 0) + '</span></td>';
             tbody.appendChild(tr);
           });
         }
 
-        function initCharts(data) {
-          // Main Line Chart
+        function renderAverageProgress(data, totalHours) {
+          const container = document.getElementById('avgChartsContainer');
+          const loading = document.getElementById('avgChartsLoading');
+          if (loading) loading.remove();
+
+          // เคลียร์อันเก่าออกเหลือแต่ Title
+          container.innerHTML = '<div class="card-title-custom">Average Charts (สัดส่วนตามคณะ)</div>';
+
+          if (!data || data.length === 0 || totalHours === 0) {
+            container.innerHTML += '<div class="text-muted text-center py-2" style="font-size:0.8rem;">ยังไม่มีข้อมูลสัดส่วน</div>';
+            return;
+          }
+
+          const facultyHours = { '01': 0, '02': 0, '03': 0, 'other': 0 };
+          data.forEach(item => {
+            const code = item.facultyCode;
+            if (facultyHours[code] !== undefined) {
+              facultyHours[code] += (Number(item.hours) || 0);
+            } else {
+              facultyHours['other'] += (Number(item.hours) || 0);
+            }
+          });
+
+          const items = [
+            { name: 'คณะวิทยาศาสตร์ฯ (01)', hours: facultyHours['01'], bg: 'bg-danger' },
+            { name: 'คณะบริหารธุรกิจฯ (02)', hours: facultyHours['02'], bg: 'bg-primary' },
+            { name: 'คณะวิศวกรรมศาสตร์ (03)', hours: facultyHours['03'], bg: 'bg-warning' },
+            { name: 'คณะอื่นๆ', hours: facultyHours['other'], bg: 'bg-success' }
+          ];
+
+          items.forEach(item => {
+            const percent = totalHours > 0 ? Math.round((item.hours / totalHours) * 100) : 0;
+            const html = \`
+              <div class="progress-item">
+                <div class="progress-label"><span>\${item.name}</span><span>\${percent}%</span></div>
+                <div class="progress"><div class="progress-bar \${item.bg} progress-bar-custom" style="width: \${percent}%"></div></div>
+              </div>
+            \`;
+            container.innerHTML += html;
+          });
+        }
+
+        function initCharts(data, totalHours) {
+          // 1. คำนวณชั่วโมงย้อนหลัง 7 เดือนสำหรับ Main Line Chart
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const today = new Date();
+          const labelsMonth = [];
+          const monthDataMap = {};
+
+          for (let i = 6; i >= 0; i--) {
+            const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+            const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+            const label = monthNames[d.getMonth()];
+            labelsMonth.push(label);
+            monthDataMap[key] = 0;
+          }
+
+          data.forEach(item => {
+            if (item.date) {
+              const d = new Date(item.date);
+              const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+              if (monthDataMap[key] !== undefined) {
+                monthDataMap[key] += (Number(item.hours) || 0);
+              }
+            }
+          });
+
+          const lineChartValues = Object.values(monthDataMap);
+
           if (charts.mainLine) charts.mainLine.destroy();
           const ctxLine = document.getElementById('mainLineChart').getContext('2d');
           charts.mainLine = new Chart(ctxLine, {
             type: 'line',
             data: {
-              labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'],
+              labels: labelsMonth,
               datasets: [{
                 label: 'ชั่วโมงจิตอาสา',
-                data: [12, 19, 8, 25, 22, 30, 28],
+                data: lineChartValues,
                 borderColor: '#ffaa00',
                 backgroundColor: 'rgba(255,170,0,0.1)',
                 tension: 0.4,
-                pointBackgroundColor: ['#0088ff', '#0088ff', '#0088ff', '#0088ff', '#0088ff', '#0088ff', '#0088ff']
+                fill: true,
+                pointBackgroundColor: '#0088ff'
               }]
             },
             options: {
@@ -669,21 +723,26 @@ app.get('/admin', (req, res) => {
             }
           });
 
-          // Mini Area Chart 1
-          createMiniChart('miniChart1', [10, 20, 15, 30, 25, 40], '#0088ff');
-          // Mini Area Chart 2
-          createMiniChart('miniChart2', [5, 15, 25, 20, 35, 30], '#ffaa00');
-          // Mini Area Chart 3
-          createMiniChart('miniChart3', [12, 18, 14, 22, 28, 35], '#00cc88');
+          // 2. Mini Area Charts (สร้างจากข้อมูลจริง)
+          const recentValues = data.slice(0, 6).map(i => Number(i.hours) || 0).reverse();
+          const defaultData = recentValues.length > 0 ? recentValues : [0, 0, 0, 0, 0, 0];
+          
+          createMiniChart('miniChart1', defaultData, '#0088ff');
+          createMiniChart('miniChart2', defaultData, '#ffaa00');
+          createMiniChart('miniChart3', defaultData, '#00cc88');
 
-          // Donut Chart
+          // 3. Donut Chart (คำนวณจากเป้าหมายสมมติ 1,000 ชั่วโมง)
+          const targetGoal = 1000;
+          const targetPercent = Math.min(100, Math.round((totalHours / targetGoal) * 100));
+          document.getElementById('donutPercentText').innerText = targetPercent + '%';
+
           if (charts.donut) charts.donut.destroy();
           const ctxDonut = document.getElementById('donutChart').getContext('2d');
           charts.donut = new Chart(ctxDonut, {
             type: 'doughnut',
             data: {
               datasets: [{
-                data: [75, 25],
+                data: [targetPercent, 100 - targetPercent],
                 backgroundColor: ['#ffaa00', '#e2e8f0'],
                 borderWidth: 0
               }]
@@ -696,7 +755,17 @@ app.get('/admin', (req, res) => {
             }
           });
 
-          // Bar Chart
+          // 4. Bar Chart (Detailed Chart 02 - แยกตามคณะจริง)
+          const facultyHours = { '01': 0, '02': 0, '03': 0, 'other': 0 };
+          data.forEach(item => {
+            const code = item.facultyCode;
+            if (facultyHours[code] !== undefined) {
+              facultyHours[code] += (Number(item.hours) || 0);
+            } else {
+              facultyHours['other'] += (Number(item.hours) || 0);
+            }
+          });
+
           if (charts.bar) charts.bar.destroy();
           const ctxBar = document.getElementById('barChart').getContext('2d');
           charts.bar = new Chart(ctxBar, {
@@ -704,7 +773,7 @@ app.get('/admin', (req, res) => {
             data: {
               labels: ['01', '02', '03', 'อื่นๆ'],
               datasets: [{
-                data: [12, 19, 15, 8],
+                data: [facultyHours['01'], facultyHours['02'], facultyHours['03'], facultyHours['other']],
                 backgroundColor: ['#ff4d4d', '#0088ff', '#ffaa00', '#aa00ff'],
                 borderRadius: 4
               }]
