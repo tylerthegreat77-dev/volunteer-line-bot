@@ -43,13 +43,17 @@ const blobClient = line.messagingApi
   : client;
 
 // Webhook LINE
-app.post('/webhook', line.middleware(config), (req, res) => {
-  Promise.all(req.body.events.map(handleEvent))
-    .then((result) => res.json(result))
-    .catch((err) => {
-      console.error('Webhook Error:', err);
-      res.status(500).end();
-    });
+app.post('/webhook', line.middleware(config), async (req, res) => {
+  try {
+    // 1. เพิ่ม log ตรงนี้ เพื่อเช็กว่ายิงมาถึงไหม ก่อนจะส่งไปเข้า handleEvent
+    console.log('--- WEBHOOK HIT ---', req.body.events);
+
+    const results = await Promise.all(req.body.events.map(handleEvent));
+    res.status(200).json(results);
+  } catch (err) {
+    console.error('Webhook Error:', err);
+    res.status(500).end();
+  }
 });
 
 app.use(express.json());
