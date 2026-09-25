@@ -53,14 +53,17 @@ app.post('/webhook', line.middleware(config), (req, res) => {
     .then((result) => {
       console.log('✅ LINE EVENT HANDLED');
       console.log('📤 Result:', JSON.stringify(result, null, 2));
+
       res.status(200).json(result);
     })
     .catch((err) => {
       console.error('❌ WEBHOOK ERROR:', err);
       console.error(err.stack);
-      res.status(500).end();
+
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
     });
-});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
