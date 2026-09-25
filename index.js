@@ -99,7 +99,7 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. API แก้ไขข้อมูลรายการบันทึก (เพิ่มใหม่)
+// 2. API แก้ไขข้อมูลรายการบันทึก
 app.put('/api/admin/records/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -130,7 +130,7 @@ app.put('/api/admin/records/:id', async (req, res) => {
   }
 });
 
-// 3. API ลบรายการบันทึก (เพิ่มใหม่)
+// 3. API ลบรายการบันทึก
 app.delete('/api/admin/records/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -196,7 +196,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 5. หน้า Admin Dashboard สไตล์ Modern Pro UI + Visual Analytics + Complete CRUD
+// 5. หน้า Admin Dashboard สไตล์ Modern Pro UI
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -206,11 +206,9 @@ app.get('/admin', (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Volunteer Pro Admin Dashboard</title>
       
-      <!-- Typography & UI Frameworks -->
       <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
       <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
       <script src="https://unpkg.com/lucide@latest"></script>
-      <!-- Chart.js -->
       <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
       <style>
@@ -846,22 +844,27 @@ async function handleEvent(event) {
       }
 
       const totalHours = records.reduce((sum, item) => sum + item.hours, 0);
-      const validRecord = records.reverse().find(r => r.name && r.name !== 'ไม่ระบุชื่อ');
+      const validRecord = records.slice().reverse().find(r => r.name && r.name !== 'ไม่ระบุชื่อ');
       const studentName = validRecord ? validRecord.name : (records[0].name || 'ไม่ระบุชื่อ');
       const facultyName = validRecord ? (validRecord.facultyName || 'ไม่ระบุ') : 'ไม่ระบุ';
 
-      const replyText = `📊 สรุปชั่วโมงจิตอาสา\n\n` +
+      let replyText = `📊 สรุปชั่วโมงจิตอาสา\n\n` +
                         `👤 ชื่อ: ${studentName}\n` +
                         `🆔 รหัส: ${studentId}\n` +
-                        `🏛 คณะ: ${facultyName}\n` +
-                        `📝 บันทึกทั้งหมด: ${records.length} ครั้ง\n` +
-                        `⏱ ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
+                        `🏛️ คณะ: ${facultyName}\n` +
+                        `⏳ ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง\n\n` +
+                        `📜 ประวัติการบันทึก (${records.length} รายการ):\n`;
+
+      records.forEach((rec, idx) => {
+        const dateStr = rec.date ? new Date(rec.date).toLocaleDateString('th-TH') : '-';
+        replyText += `${idx + 1}. ${rec.activityName} (${rec.hours} ชม.) - ${dateStr}\n`;
+      });
 
       return replyTextMsg(event.replyToken, replyText);
 
     } catch (error) {
-      console.error('Error fetching data:', error);
-      return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการดึงข้อมูล กรุณาลองใหม่อีกครั้ง');
+      console.error('Error checking hours:', error);
+      return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการตรวจสอบข้อมูล กรุณาลองใหม่อีกครั้ง');
     }
   }
 
@@ -869,118 +872,89 @@ async function handleEvent(event) {
   if (userText.startsWith('บันทึก')) {
     const parts = userText.split(/\s+/).filter(p => p.trim() !== '');
 
+    // รูปแบบที่คาดหวัง: บันทึก [รหัสคณะ] [รหัสนักศึกษา] [ชื่อ-นามสกุล] [ชั่วโมง] [ชื่อกิจกรรม]
     if (parts.length < 6) {
       return replyTextMsg(
-        event.replyToken, 
-        '❌ รูปแบบคำสั่งไม่ถูกต้อง!\nกรุณาพิมพ์: บันทึก <รหัสคณะ> <รหัสนักศึกษา> <ชื่อ-นามสกุล> <จำนวนชั่วโมง> <ชื่อกิจกรรม>\n\n' +
-        '🏛 รหัสคณะ:\n01 = วิทยาศาสตร์และเทคโนโลยีการเกษตร\n02 = บริหารธุรกิจและศิลปศาสตร์\n03 = วิศวกรรมศาสตร์\n\n' +
-        'ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
+        event.replyToken,
+        '❌ รูปแบบคำสั่งไม่ถูกต้อง!\n\nกรุณาพิมพ์รูปแบบดังนี้:\nบันทึก [รหัสคณะ] [รหัสนักศึกษา] [ชื่อ-นามสกุล] [ชั่วโมง] [ชื่อกิจกรรม]\n\nตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n📌 รหัสคณะ:\n01 = วท.การเกษตร\n02 = บริหารธุรกิจฯ\n03 = วิศวกรรมศาสตร์'
       );
     }
 
     const facultyCode = parts[1];
     const studentId = parts[2];
-
-    let hoursIndex = -1;
-    for (let i = 3; i < parts.length - 1; i++) {
-      if (!isNaN(parts[i])) {
-        hoursIndex = i;
-        break;
-      }
-    }
-
-    if (hoursIndex === -1) {
-      return replyTextMsg(
-        event.replyToken, 
-        '❌ ไม่พบจำนวนชั่วโมงที่เป็นตัวเลข หรือพิมพ์รูปแบบไม่ถูกต้อง\nตัวอย่างที่ถูกต้อง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด'
-      );
-    }
-
-    const name = parts.slice(3, hoursIndex).join(' ').trim();
-    const hours = parseFloat(parts[hoursIndex]);
-    const activityName = parts.slice(hoursIndex + 1).join(' ').trim();
+    const hours = parseFloat(parts[4]);
+    const activityName = parts.slice(5).join(' ');
+    const name = parts[3];
 
     if (!FACULTY_MAP[facultyCode]) {
-      return replyTextMsg(
-        event.replyToken,
-        '❌ รหัสคณะไม่ถูกต้อง!\nกรุณาใช้รหัสคณะดังนี้:\n01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n02 = คณะบริหารธุรกิจและศิลปศาสตร์\n03 = คณะวิศวกรรมศาสตร์'
-      );
-    }
-
-    const facultyName = FACULTY_MAP[facultyCode];
-
-    if (!name) {
-      return replyTextMsg(event.replyToken, '❌ ไม่พบชื่อ-นามสกุล กรุณาตรวจสอบรูปแบบอีกครั้ง');
+      return replyTextMsg(event.replyToken, '❌ รหัสคณะไม่ถูกต้อง (กรุณาใช้ 01, 02 หรือ 03)');
     }
 
     if (isNaN(hours) || hours <= 0) {
-      return replyTextMsg(event.replyToken, '❌ จำนวนชั่วโมงต้องเป็นตัวเลขที่มากกว่า 0');
-    }
-
-    if (!activityName) {
-      return replyTextMsg(event.replyToken, '❌ กรุณาระบุชื่อกิจกรรมต่อท้ายด้วยครับ');
+      return replyTextMsg(event.replyToken, '❌ กรุณาระบุจำนวนชั่วโมงเป็นตัวเลขที่มากกว่า 0');
     }
 
     try {
-      const tempImg = await TempImage.findOneAndDelete({ userId });
-      const imageUrl = tempImg ? tempImg.imageUrl : '';
+      // ดึงรูปภาพชั่วคราวที่แนบไว้ล่าสุด (ถ้ามี)
+      const tempImage = await TempImage.findOne({ userId }).sort({ createdAt: -1 });
+      const imageUrl = tempImage ? tempImage.imageUrl : '';
 
-      const newRecord = new Volunteer({ 
-        userId, 
-        facultyCode, 
-        facultyName, 
-        studentId, 
-        name, 
-        hours, 
-        activityName, 
-        imageUrl 
+      const facultyName = FACULTY_MAP[facultyCode];
+
+      const newRecord = new Volunteer({
+        userId,
+        facultyCode,
+        facultyName,
+        studentId,
+        name,
+        hours,
+        activityName,
+        imageUrl
       });
 
       await newRecord.save();
 
-      const allRecords = await Volunteer.find({ studentId });
-      const totalHours = allRecords.reduce((sum, item) => sum + item.hours, 0);
-
-      let replyText = `✅ บันทึกชั่วโมงจิตอาสาสำเร็จ!\n\n` +
-                        `👤 ชื่อ: ${name}\n` +
-                        `🆔 รหัส: ${studentId}\n` +
-                        `🏛 คณะ: ${facultyName}\n` +
-                        `📌 กิจกรรม: ${activityName}\n` +
-                        `⏱ บันทึกเพิ่ม: ${hours} ชั่วโมง\n` +
-                        `📊 ชั่วโมงสะสมรวม: ${totalHours} ชั่วโมง`;
-
-      if (imageUrl) {
-        replyText += `\n📷 แนบรูปภาพหลักฐานเรียบร้อยแล้ว`;
-      } else {
-        replyText += `\n⚠️ (บันทึกโดยไม่มีรูปภาพหลักฐาน)`;
+      // ลบรูปภาพชั่วคราวหลังจากถูกนำไปใช้บันทึกเรียบร้อย
+      if (tempImage) {
+        await TempImage.deleteOne({ _id: tempImage._id });
       }
 
-      return replyTextMsg(event.replyToken, replyText);
+      const imgStatus = imageUrl ? '📷 แนบรูปภาพหลักฐานแล้ว' : '⚠️ ไม่ได้แนบรูปภาพหลักฐาน';
+
+      return replyTextMsg(
+        event.replyToken,
+        `✅ บันทึกชั่วโมงจิตอาสาสำเร็จ!\n\n` +
+        `🏛️ คณะ: ${facultyName}\n` +
+        `🆔 รหัสนักศึกษา: ${studentId}\n` +
+        `👤 ชื่อ: ${name}\n` +
+        `🎯 กิจกรรม: ${activityName}\n` +
+        `⏳ จำนวน: ${hours} ชั่วโมง\n` +
+        `${imgStatus}\n\n` +
+        `ขอบคุณที่ร่วมทำกิจกรรมจิตอาสาครับ 🙏`
+      );
 
     } catch (error) {
-      console.error('Error saving to DB:', error);
+      console.error('Error saving volunteer record:', error);
       return replyTextMsg(event.replyToken, '❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง');
     }
   }
 
-  // 3. ข้อความแนะนำการใช้งาน
-  const helpText = `👋 ยินดีต้อนรับสู่ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
-                   `📌 ขั้นตอนการใช้งาน:\n` +
-                   `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
-                   `2️⃣ พิมพ์บันทึกชั่วโมงตามรูปแบบ:\n` +
-                   `บันทึก <รหัสคณะ> <รหัสประจำตัว> <ชื่อ-นามสกุล> <ชั่วโมง> <ชื่อกิจกรรม>\n\n` +
-                   `🏛 รหัสคณะ:\n` +
-                   `01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n` +
-                   `02 = คณะบริหารธุรกิจและศิลปศาสตร์\n` +
-                   `03 = คณะวิศวกรรมศาสตร์\n\n` +
-                   `💡 ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n` +
-                   `🔍 เช็คชั่วโมงสะสม:\n` +
-                   `พิมพ์: เช็คชั่วโมง <รหัสนักศึกษา>`;
-
-  return replyTextMsg(event.replyToken, helpText);
+  // 3. ข้อความช่วยเหลือทั่วไป
+  return replyTextMsg(
+    event.replyToken,
+    '👋 สวัสดีครับ! ระบบบันทึกชั่วโมงจิตอาสาพร้อมใช้งาน\n\n' +
+    '📌 วิธีการบันทึกชั่วโมง:\n' +
+    '1. (ตัวเลือก) ส่งรูปภาพหลักฐานเข้ามาก่อน\n' +
+    '2. พิมพ์คำสั่งบันทึก เช่น:\n' +
+    'บันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n' +
+    '🔍 วิธีตรวจสอบชั่วโมงสะสม:\n' +
+    'พิมพ์: เช็คชั่วโมง [รหัสนักศึกษา]\n' +
+    'เช่น: เช็คชั่วโมง 6501234567'
+  );
 }
 
+// เริ่มต้น Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server เปิดทำงานแล้วที่ Port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
