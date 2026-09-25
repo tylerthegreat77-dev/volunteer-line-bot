@@ -78,7 +78,7 @@ const volunteerSchema = new mongoose.Schema({
   date: { type: Date, default: Date.now }
 });
 
-const Volunteer = mongoose.model('Volunteer', volunteerSchema);
+const Volunteer = mongoose.model('Volunteer', volunteerSchema, 'records');
 
 // Schema สำหรับเก็บรูปภาพชั่วคราว
 const tempImageSchema = new mongoose.Schema({
