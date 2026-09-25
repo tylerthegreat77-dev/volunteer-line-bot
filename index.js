@@ -44,20 +44,10 @@ const blobClient = line.messagingApi
 
 // Webhook LINE
 app.post('/webhook', line.middleware(config), (req, res) => {
-  console.log('====================================');
-  console.log('🔥 LINE WEBHOOK RECEIVED');
-  console.log('📦 Events:', JSON.stringify(req.body.events, null, 2));
-  console.log('====================================');
-
   Promise.all(req.body.events.map(handleEvent))
-    .then((result) => {
-      console.log('✅ LINE EVENT HANDLED');
-      console.log('📤 Result:', JSON.stringify(result, null, 2));
-      res.status(200).json(result);
-    })
+    .then((result) => res.json(result))
     .catch((err) => {
-      console.error('❌ WEBHOOK ERROR:', err);
-      console.error(err.stack);
+      console.error('Webhook Error:', err);
       res.status(500).end();
     });
 });
