@@ -785,14 +785,12 @@ app.get('/admin', (req, res) => {
 // 💬 LINE BOT HANDLER
 // ==========================================
 
+// ✅ แก้ไขให้เป็นรูปแบบมาตรฐานของ LINE SDK v7.x
 function replyTextMsg(replyToken, text) {
-  if (client.replyMessage && typeof client.replyMessage === 'function') {
-    return client.replyMessage({
-      replyToken: replyToken,
-      messages: [{ type: 'text', text }]
-    });
-  }
-  return client.replyMessage(replyToken, { type: 'text', text });
+  return client.replyMessage(replyToken, {
+    type: 'text',
+    text: text
+  });
 }
 
 async function handleImageMessage(event) {
