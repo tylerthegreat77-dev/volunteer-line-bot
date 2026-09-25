@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-// บังคับให้ Node.js ใช้ Google DNS (ช่วยแก้ปัญหา Resolve DNS บน Server)
+// บังคับให้ Node.js ใช้ Google DNS
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -42,7 +42,7 @@ const blobClient = line.messagingApi
   ? new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: config.channelAccessToken })
   : client;
 
-// Webhook LINE (ต้องวางก่อน express.json middleware เพื่อให้ line.middleware ทำงานได้ถูกต้อง)
+// Webhook LINE
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -53,6 +53,7 @@ app.post('/webhook', line.middleware(config), (req, res) => {
 });
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // เชื่อมต่อ MongoDB
@@ -75,7 +76,7 @@ const volunteerSchema = new mongoose.Schema({
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema);
 
-// Schema สำหรับเก็บรูปภาพชั่วคราว (ลบอัตโนมัติใน 30 นาที)
+// Schema สำหรับเก็บรูปภาพชั่วคราว
 const tempImageSchema = new mongoose.Schema({
   userId: String,
   imageUrl: String,
@@ -98,7 +99,54 @@ app.get('/api/admin/records', async (req, res) => {
   }
 });
 
-// 2. Export Excel
+// 2. API แก้ไขข้อมูลรายการบันทึก (เพิ่มใหม่)
+app.put('/api/admin/records/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { facultyCode, studentId, name, hours, activityName } = req.body;
+
+    const facultyName = FACULTY_MAP[facultyCode] || 'ไม่ระบุคณะ';
+
+    const updatedRecord = await Volunteer.findByIdAndUpdate(
+      id,
+      {
+        facultyCode,
+        facultyName,
+        studentId,
+        name,
+        hours: Number(hours),
+        activityName
+      },
+      { new: true }
+    );
+
+    if (!updatedRecord) {
+      return res.status(404).json({ success: false, message: 'ไม่พบรายการที่ต้องการแก้ไข' });
+    }
+
+    res.json({ success: true, message: 'อัปเดตข้อมูลสำเร็จ', data: updatedRecord });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. API ลบรายการบันทึก (เพิ่มใหม่)
+app.delete('/api/admin/records/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedRecord = await Volunteer.findByIdAndDelete(id);
+
+    if (!deletedRecord) {
+      return res.status(404).json({ success: false, message: 'ไม่พบรายการที่ต้องการลบ' });
+    }
+
+    res.json({ success: true, message: 'ลบข้อมูลสำเร็จ' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 4. Export Excel
 app.get('/admin/export-excel', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
@@ -148,7 +196,7 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 3. หน้า Admin Dashboard สไตล์ Modern UI
+// 5. หน้า Admin Dashboard สไตล์ Modern Pro UI + Visual Analytics + Complete CRUD
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -156,51 +204,71 @@ app.get('/admin', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Volunteer Admin Dashboard</title>
+      <title>Volunteer Pro Admin Dashboard</title>
+      
+      <!-- Typography & UI Frameworks -->
       <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
       <script src="https://unpkg.com/lucide@latest"></script>
+      <!-- Chart.js -->
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
       <style>
         :root {
-          --bg-body: #f4f6f9;
-          --card-border-color: #e9ecef;
+          --bg-main: #f8fafc;
+          --border-color: #e2e8f0;
           --primary-color: #4f46e5;
           --primary-hover: #4338ca;
+          --card-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.03), 0 4px 6px -4px rgba(15, 23, 42, 0.02);
         }
 
         body {
           font-family: 'Sarabun', 'Plus Jakarta Sans', sans-serif;
-          background-color: var(--bg-body);
-          color: #334155;
+          background-color: var(--bg-main);
+          color: #1e293b;
         }
 
         .navbar {
-          background: #ffffff;
-          border-bottom: 1px solid var(--card-border-color);
+          background: rgba(255, 255, 255, 0.85);
+          backdrop-filter: blur(12px);
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .brand-icon {
+          width: 40px;
+          height: 40px;
+          background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+          color: white;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
         }
 
         .card {
-          border: 1px solid var(--card-border-color);
-          border-radius: 16px;
-          box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-          transition: all 0.2s ease;
+          border: 1px solid var(--border-color);
+          border-radius: 20px;
+          box-shadow: var(--card-shadow);
+          background: #ffffff;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
 
-        .stat-card {
-          background: #ffffff;
+        .stat-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 20px -5px rgba(15, 23, 42, 0.08);
         }
 
         .stat-icon {
-          width: 48px;
-          height: 48px;
-          border-radius: 12px;
+          width: 52px;
+          height: 52px;
+          border-radius: 14px;
           display: flex;
           align-items: center;
           justify-content: center;
         }
 
         .table-card {
-          background: #ffffff;
           overflow: hidden;
         }
 
@@ -210,66 +278,64 @@ app.get('/admin', (req, res) => {
         }
 
         .table thead th {
-          font-size: 0.8rem;
+          font-size: 0.75rem;
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.08em;
           color: #64748b;
-          font-weight: 600;
+          font-weight: 700;
           background-color: #f8fafc;
         }
 
         .img-thumb {
-          width: 44px;
-          height: 44px;
+          width: 46px;
+          height: 46px;
           object-fit: cover;
-          border-radius: 10px;
+          border-radius: 12px;
           cursor: pointer;
           border: 1px solid #e2e8f0;
           transition: transform 0.2s ease;
         }
 
         .img-thumb:hover {
-          transform: scale(1.08);
+          transform: scale(1.1);
         }
 
         .badge-faculty {
           font-size: 0.75rem;
-          padding: 0.35em 0.65em;
-          border-radius: 6px;
-          font-weight: 500;
+          padding: 0.4em 0.8em;
+          border-radius: 8px;
+          font-weight: 600;
         }
 
         .badge-hours {
           background-color: #ecfdf5;
           color: #047857;
           border: 1px solid #a7f3d0;
-          font-weight: 600;
+          font-weight: 700;
           padding: 0.4em 0.8em;
+          border-radius: 30px;
+        }
+
+        .btn-action {
+          width: 34px;
+          height: 34px;
+          padding: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 8px;
+        }
+
+        .chart-container {
+          position: relative;
+          height: 260px;
+          width: 100%;
+        }
+
+        .modal-content {
           border-radius: 20px;
-        }
-
-        .search-box .form-control, .search-box .form-select {
-          border-radius: 10px;
-          border: 1px solid #cbd5e1;
-          padding: 0.6rem 1rem;
-        }
-
-        .search-box .form-control:focus, .search-box .form-select:focus {
-          border-color: var(--primary-color);
-          box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
-        }
-
-        .btn-custom-primary {
-          background-color: var(--primary-color);
-          color: white;
-          border-radius: 10px;
-          padding: 0.6rem 1.2rem;
-          font-weight: 500;
-        }
-
-        .btn-custom-primary:hover {
-          background-color: var(--primary-hover);
-          color: white;
+          border: none;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
       </style>
     </head>
@@ -278,17 +344,20 @@ app.get('/admin', (req, res) => {
       <!-- Navbar -->
       <nav class="navbar navbar-expand-lg sticky-top py-3">
         <div class="container-fluid px-4">
-          <a class="navbar-brand d-flex align-items-center gap-2 fw-bold text-dark" href="#">
-            <div class="bg-primary text-white p-2 rounded-3 d-flex align-items-center justify-content-center" style="width:36px; height:36px;">
-              <i data-lucide="heart-handshake" style="width:20px;"></i>
+          <a class="navbar-brand d-flex align-items-center gap-3 fw-bold text-dark" href="#">
+            <div class="brand-icon">
+              <i data-lucide="heart-handshake" style="width:22px;"></i>
             </div>
-            <span>Volunteer System Admin</span>
+            <div>
+              <div class="fs-5 lh-1">Volunteer Admin</div>
+              <span class="text-muted fw-normal" style="font-size:0.75rem;">ระบบจัดการชั่วโมงจิตอาสา</span>
+            </div>
           </a>
           <div class="d-flex gap-2">
-            <a href="/admin/export-excel" class="btn btn-outline-success d-flex align-items-center gap-2" style="border-radius:10px;">
+            <a href="/admin/export-excel" class="btn btn-outline-success d-flex align-items-center gap-2 px-3" style="border-radius:12px; font-weight:500;">
               <i data-lucide="file-spreadsheet" style="width:18px;"></i> Export Excel
             </a>
-            <button class="btn btn-custom-primary d-flex align-items-center gap-2" onclick="loadData()">
+            <button class="btn btn-primary d-flex align-items-center gap-2 px-3" style="border-radius:12px; background:var(--primary-color); font-weight:500;" onclick="loadData()">
               <i data-lucide="refresh-cw" style="width:18px;"></i> รีเฟรช
             </button>
           </div>
@@ -297,17 +366,17 @@ app.get('/admin', (req, res) => {
 
       <div class="container-fluid px-4 py-4">
         
-        <!-- Stat Cards Summary -->
+        <!-- Summary Cards -->
         <div class="row g-3 mb-4">
           <div class="col-12 col-md-4">
             <div class="card stat-card p-3">
               <div class="d-flex align-items-center justify-content-between">
                 <div>
-                  <div class="text-muted small fw-medium mb-1">จำนวนการบันทึกทั้งหมด</div>
-                  <h3 class="fw-bold mb-0" id="statCount">0</h3>
+                  <div class="text-muted small fw-semibold mb-1">จำนวนการบันทึกทั้งหมด</div>
+                  <h2 class="fw-bold mb-0 text-dark" id="statCount">0</h2>
                 </div>
                 <div class="stat-icon bg-primary-subtle text-primary">
-                  <i data-lucide="clipboard-list"></i>
+                  <i data-lucide="clipboard-list" style="width:26px; height:26px;"></i>
                 </div>
               </div>
             </div>
@@ -316,11 +385,11 @@ app.get('/admin', (req, res) => {
             <div class="card stat-card p-3">
               <div class="d-flex align-items-center justify-content-between">
                 <div>
-                  <div class="text-muted small fw-medium mb-1">ชั่วโมงสะสมรวมทั้งหมด</div>
-                  <h3 class="fw-bold mb-0 text-success" id="statHours">0 <small class="fs-6">ชม.</small></h3>
+                  <div class="text-muted small fw-semibold mb-1">ชั่วโมงสะสมรวมทั้งหมด</div>
+                  <h2 class="fw-bold mb-0 text-success" id="statHours">0 <small class="fs-6">ชม.</small></h2>
                 </div>
                 <div class="stat-icon bg-success-subtle text-success">
-                  <i data-lucide="clock"></i>
+                  <i data-lucide="clock" style="width:26px; height:26px;"></i>
                 </div>
               </div>
             </div>
@@ -329,30 +398,54 @@ app.get('/admin', (req, res) => {
             <div class="card stat-card p-3">
               <div class="d-flex align-items-center justify-content-between">
                 <div>
-                  <div class="text-muted small fw-medium mb-1">นักศึกษาที่เข้าร่วม</div>
-                  <h3 class="fw-bold mb-0 text-indigo" id="statStudents">0 <small class="fs-6">คน</small></h3>
+                  <div class="text-muted small fw-semibold mb-1">นักศึกษาที่เข้าร่วม</div>
+                  <h2 class="fw-bold mb-0 text-indigo" id="statStudents">0 <small class="fs-6">คน</small></h2>
                 </div>
                 <div class="stat-icon bg-warning-subtle text-warning">
-                  <i data-lucide="users"></i>
+                  <i data-lucide="users" style="width:26px; height:26px;"></i>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
+        <!-- Charts Section -->
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-lg-7">
+            <div class="card p-3">
+              <h6 class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
+                <i data-lucide="bar-chart-3" class="text-primary" style="width:18px;"></i> สรุปชั่วโมงจำแนกตามคณะ
+              </h6>
+              <div class="chart-container">
+                <canvas id="facultyChart"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-5">
+            <div class="card p-3">
+              <h6 class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
+                <i data-lucide="pie-chart" class="text-primary" style="width:18px;"></i> สัดส่วนจำนวนครั้งการเข้าร่วม
+              </h6>
+              <div class="chart-container">
+                <canvas id="ratioChart"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Filter & Search Box -->
-        <div class="card p-3 mb-4 search-box">
+        <div class="card p-3 mb-4">
           <div class="row g-3">
             <div class="col-12 col-md-8">
               <div class="input-group">
-                <span class="input-group-text bg-white border-end-0 pe-0" style="border-radius: 10px 0 0 10px; border-color: #cbd5e1;">
+                <span class="input-group-text bg-white border-end-0 pe-0" style="border-radius: 12px 0 0 12px; border-color: #cbd5e1;">
                   <i data-lucide="search" class="text-muted" style="width:18px;"></i>
                 </span>
-                <input type="text" id="searchInput" class="form-control border-start-0" style="border-radius: 0 10px 10px 0;" placeholder="ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล หรือกิจกรรม..." onkeyup="filterTable()">
+                <input type="text" id="searchInput" class="form-control border-start-0" style="border-radius: 0 12px 12px 0; border-color: #cbd5e1;" placeholder="ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล หรือกิจกรรม..." onkeyup="filterTable()">
               </div>
             </div>
             <div class="col-12 col-md-4">
-              <select id="facultyFilter" class="form-select" onchange="filterTable()">
+              <select id="facultyFilter" class="form-select" style="border-radius: 12px; border-color: #cbd5e1;" onchange="filterTable()">
                 <option value="">🏛️ แสดงทุกคณะ</option>
                 <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
                 <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
@@ -374,10 +467,11 @@ app.get('/admin', (req, res) => {
                   <th>ชื่อกิจกรรม</th>
                   <th>ชั่วโมง</th>
                   <th>วันที่บันทึก</th>
+                  <th class="text-end">จัดการ</th>
                 </tr>
               </thead>
               <tbody id="recordTableBody">
-                <tr><td colspan="6" class="text-center py-5 text-muted">กำลังโหลดข้อมูล...</td></tr>
+                <tr><td colspan="7" class="text-center py-5 text-muted">กำลังโหลดข้อมูล...</td></tr>
               </tbody>
             </table>
           </div>
@@ -396,9 +490,56 @@ app.get('/admin', (req, res) => {
         </div>
       </div>
 
+      <!-- Modal แก้ไขข้อมูล -->
+      <div class="modal fade" id="editModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content p-2">
+            <div class="modal-header border-0 pb-0">
+              <h5 class="modal-header-title fw-bold">✏️ แก้ไขข้อมูลบันทึกจิตอาสา</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <form id="editForm">
+                <input type="hidden" id="editId">
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">คณะ</label>
+                  <select id="editFacultyCode" class="form-select" required style="border-radius:10px;">
+                    <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
+                    <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
+                    <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">รหัสนักศึกษา</label>
+                  <input type="text" id="editStudentId" class="form-control" required style="border-radius:10px;">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">ชื่อ-นามสกุล</label>
+                  <input type="text" id="editName" class="form-control" required style="border-radius:10px;">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">จำนวนชั่วโมง</label>
+                  <input type="number" id="editHours" class="form-control" min="0.5" step="0.5" required style="border-radius:10px;">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">ชื่อกิจกรรม</label>
+                  <input type="text" id="editActivityName" class="form-control" required style="border-radius:10px;">
+                </div>
+                <div class="d-flex justify-content-end gap-2 pt-2">
+                  <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="border-radius:10px;">ยกเลิก</button>
+                  <button type="submit" class="btn btn-primary" style="border-radius:10px; background:var(--primary-color);">บันทึกการเปลี่ยนแปลง</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
       <script>
         let allRecords = [];
+        let facultyChart = null;
+        let ratioChart = null;
 
         async function loadData() {
           try {
@@ -407,6 +548,7 @@ app.get('/admin', (req, res) => {
             if (result.success) {
               allRecords = result.data;
               updateStats(allRecords);
+              renderCharts(allRecords);
               renderData(allRecords);
             }
           } catch (err) {
@@ -424,12 +566,65 @@ app.get('/admin', (req, res) => {
           document.getElementById('statStudents').innerText = uniqueStudents.toLocaleString();
         }
 
+        function renderCharts(data) {
+          const facultyHours = { '01': 0, '02': 0, '03': 0 };
+          const facultyCounts = { '01': 0, '02': 0, '03': 0 };
+
+          data.forEach(item => {
+            if (facultyHours[item.facultyCode] !== undefined) {
+              facultyHours[item.facultyCode] += (item.hours || 0);
+              facultyCounts[item.facultyCode] += 1;
+            }
+          });
+
+          // 1. Bar Chart (ชั่วโมงรวมแต่ละคณะ)
+          const ctxBar = document.getElementById('facultyChart').getContext('2d');
+          if (facultyChart) facultyChart.destroy();
+          facultyChart = new Chart(ctxBar, {
+            type: 'bar',
+            data: {
+              labels: ['วิทยาศาสตร์ฯ (01)', 'บริหารธุรกิจฯ (02)', 'วิศวกรรมศาสตร์ (03)'],
+              datasets: [{
+                label: 'ชั่วโมงสะสม',
+                data: [facultyHours['01'], facultyHours['02'], facultyHours['03']],
+                backgroundColor: ['rgba(16, 185, 129, 0.85)', 'rgba(79, 70, 229, 0.85)', 'rgba(245, 158, 11, 0.85)'],
+                borderRadius: 8
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: { y: { beginAtZero: true } }
+            }
+          });
+
+          // 2. Doughnut Chart (สัดส่วนจำนวนครั้ง)
+          const ctxDoughnut = document.getElementById('ratioChart').getContext('2d');
+          if (ratioChart) ratioChart.destroy();
+          ratioChart = new Chart(ctxDoughnut, {
+            type: 'doughnut',
+            data: {
+              labels: ['คณะ 01', 'คณะ 02', 'คณะ 03'],
+              datasets: [{
+                data: [facultyCounts['01'], facultyCounts['02'], facultyCounts['03']],
+                backgroundColor: ['#10b981', '#4f46e5', '#f59e0b']
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom' } }
+            }
+          });
+        }
+
         function renderData(data) {
           const tbody = document.getElementById('recordTableBody');
           tbody.innerHTML = '';
 
           if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted">ไม่พบข้อมูลบันทึก</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted">ไม่พบข้อมูลบันทึก</td></tr>';
             return;
           }
 
@@ -467,6 +662,14 @@ app.get('/admin', (req, res) => {
                 <div class="small fw-medium text-dark">\${dateStr}</div>
                 <div class="text-muted" style="font-size: 11px;">\${timeStr} น.</div>
               </td>
+              <td class="text-end">
+                <button class="btn btn-action btn-outline-primary me-1" onclick="openEditModal('\${item._id}')" title="แก้ไข">
+                  <i data-lucide="edit-3" style="width:16px;"></i>
+                </button>
+                <button class="btn btn-action btn-outline-danger" onclick="deleteRecord('\${item._id}')" title="ลบ">
+                  <i data-lucide="trash-2" style="width:16px;"></i>
+                </button>
+              </td>
             \`;
             tbody.appendChild(tr);
           });
@@ -477,6 +680,65 @@ app.get('/admin', (req, res) => {
         function showModal(url) {
           document.getElementById('modalImg').src = url;
           new bootstrap.Modal(document.getElementById('imageModal')).show();
+        }
+
+        function openEditModal(id) {
+          const item = allRecords.find(r => r._id === id);
+          if (!item) return;
+
+          document.getElementById('editId').value = item._id;
+          document.getElementById('editFacultyCode').value = item.facultyCode || '01';
+          document.getElementById('editStudentId').value = item.studentId || '';
+          document.getElementById('editName').value = item.name || '';
+          document.getElementById('editHours').value = item.hours || 0;
+          document.getElementById('editActivityName').value = item.activityName || '';
+
+          new bootstrap.Modal(document.getElementById('editModal')).show();
+        }
+
+        document.getElementById('editForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const id = document.getElementById('editId').value;
+          const payload = {
+            facultyCode: document.getElementById('editFacultyCode').value,
+            studentId: document.getElementById('editStudentId').value,
+            name: document.getElementById('editName').value,
+            hours: document.getElementById('editHours').value,
+            activityName: document.getElementById('editActivityName').value
+          };
+
+          try {
+            const res = await fetch(\`/api/admin/records/\${id}\`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const result = await res.json();
+            if (result.success) {
+              bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+              loadData();
+            } else {
+              alert('แก้ไขไม่สำเร็จ: ' + result.message);
+            }
+          } catch (err) {
+            alert('เกิดข้อผิดพลาดในการส่งข้อมูล');
+          }
+        });
+
+        async function deleteRecord(id) {
+          if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?')) return;
+
+          try {
+            const res = await fetch(\`/api/admin/records/\${id}\`, { method: 'DELETE' });
+            const result = await res.json();
+            if (result.success) {
+              loadData();
+            } else {
+              alert('ลบไม่สำเร็จ: ' + result.message);
+            }
+          } catch (err) {
+            alert('เกิดข้อผิดพลาดในการลบข้อมูล');
+          }
         }
 
         function filterTable() {
@@ -701,7 +963,7 @@ async function handleEvent(event) {
     }
   }
 
-  // 3. ข้อความแนะนำการใช้งาน (สำหรับข้อความทั่วไปอื่นๆ)
+  // 3. ข้อความแนะนำการใช้งาน
   const helpText = `👋 ยินดีต้อนรับสู่ระบบบันทึกชั่วโมงจิตอาสา\n\n` +
                    `📌 ขั้นตอนการใช้งาน:\n` +
                    `1️⃣ (ถ้ามี) ส่งรูปภาพหลักฐานการทำกิจกรรม\n` +
