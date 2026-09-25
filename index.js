@@ -58,9 +58,7 @@ app.post('/webhook', line.middleware(config), (req, res) => {
     .catch((err) => {
       console.error('❌ WEBHOOK ERROR:', err);
       console.error(err.stack);
-      if (!res.headersSent) {
-        res.status(500).end();
-      }
+      res.status(500).end();
     });
 });
 
@@ -106,36 +104,6 @@ app.get('/api/admin/records', async (req, res) => {
   try {
     const records = await Volunteer.find().sort({ date: -1 });
     res.json({ success: true, data: records });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// 2. API ดูข้อมูลนักศึกษารายบุคคล
-app.get('/api/admin/students/:studentId', async (req, res) => {
-  try {
-    const { studentId } = req.params;
-    const records = await Volunteer.find({ studentId }).sort({ date: -1 });
-
-    if (!records.length) {
-      return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลนักศึกษา' });
-    }
-
-    const totalHours = records.reduce((sum, item) => sum + (Number(item.hours) || 0), 0);
-    const latest = records.find(r => r.name && r.name !== 'ไม่ระบุชื่อ') || records[0];
-
-    res.json({
-      success: true,
-      data: {
-        studentId,
-        name: latest.name || 'ไม่ระบุชื่อ',
-        facultyCode: latest.facultyCode || '',
-        facultyName: latest.facultyName || 'ไม่ระบุคณะ',
-        totalHours,
-        totalRecords: records.length,
-        records
-      }
-    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -238,248 +206,577 @@ app.get('/admin/export-excel', async (req, res) => {
   }
 });
 
-// 5. หน้า Admin Dashboard - Modern Student Analytics UI
+// 5. หน้า Admin Dashboard สไตล์ Modern Pro UI + Visual Analytics + Complete CRUD
 app.get('/admin', (req, res) => {
   res.send(`
-<!DOCTYPE html>
-<html lang="th">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Volunteer Admin • Student Analytics</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/lucide@latest"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <style>
-    :root{
-      --bg:#f5f7fb; --surface:#fff; --surface-2:#f8fafc; --line:#e8edf5;
-      --text:#172033; --muted:#718096; --primary:#635bff; --primary-2:#7c3aed;
-      --success:#10b981; --warning:#f59e0b; --danger:#ef4444;
-      --shadow:0 8px 30px rgba(15,23,42,.055); --radius:18px;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;background:radial-gradient(circle at 10% 0%,rgba(99,91,255,.08),transparent 28%),var(--bg);color:var(--text);font-family:'Sarabun','Inter',sans-serif}
-    .topbar{height:72px;background:rgba(255,255,255,.82);backdrop-filter:blur(18px);border-bottom:1px solid rgba(226,232,240,.8);position:sticky;top:0;z-index:20}
-    .brand-mark{width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,var(--primary),var(--primary-2));color:#fff;display:grid;place-items:center;box-shadow:0 8px 20px rgba(99,91,255,.22)}
-    .page{max-width:1500px;margin:auto;padding:26px 24px 42px}
-    .hero{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:22px}
-    .eyebrow{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--primary);margin-bottom:5px}
-    .hero h1{font-size:clamp(25px,3vw,36px);font-weight:800;letter-spacing:-.03em;margin:0}
-    .hero p{margin:5px 0 0;color:var(--muted);font-size:14px}
-    .cardx{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
-    .stat{padding:17px 18px;position:relative;overflow:hidden;min-height:110px}
-    .stat:after{content:'';position:absolute;width:85px;height:85px;border-radius:50%;right:-30px;bottom:-38px;background:rgba(99,91,255,.06)}
-    .stat-label{font-size:12px;color:var(--muted);font-weight:700}.stat-value{font-size:27px;font-weight:800;line-height:1.15;margin-top:7px}.stat-icon{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;position:absolute;right:16px;top:16px}
-    .icon-purple{background:#efedff;color:var(--primary)}.icon-green{background:#eafbf5;color:#059669}.icon-orange{background:#fff5df;color:#d97706}.icon-blue{background:#eaf4ff;color:#2563eb}
-    .panel{padding:17px 18px}.panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.panel-title{font-size:15px;font-weight:800}.panel-sub{font-size:12px;color:var(--muted)}
-    .chart-box{height:190px;position:relative}.chart-box.donut{height:185px}
-    .toolbar{padding:13px}.search-wrap{position:relative}.search-wrap svg{position:absolute;left:13px;top:11px;color:#94a3b8;width:17px}.search-wrap input{padding-left:40px;height:42px;border-radius:12px;border:1px solid var(--line);background:#fbfcfe}.form-select{height:42px;border-radius:12px;border-color:var(--line);background-color:#fbfcfe}
-    .table-panel{overflow:hidden}.table thead th{font-size:11px;color:#8a94a6;text-transform:uppercase;letter-spacing:.06em;background:#fbfcfe;border-bottom:1px solid var(--line);padding:13px 14px;white-space:nowrap}.table tbody td{padding:12px 14px;border-bottom:1px solid #f0f3f8;vertical-align:middle}.table tbody tr{transition:.15s}.table tbody tr:hover{background:#fafbff}
-    .student-btn{border:0;background:transparent;padding:0;text-align:left}.student-name{font-weight:800;color:var(--text);font-size:14px}.student-id{font-size:11px;color:var(--muted);margin-top:2px}.student-btn:hover .student-name{color:var(--primary)}
-    .avatar{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(135deg,#eef2ff,#f5f3ff);color:var(--primary);font-weight:800;font-size:13px}
-    .faculty-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:9px;font-size:11px;font-weight:700;background:#f4f6fa;color:#556070;border:1px solid #e7ebf2}.hours-badge{display:inline-flex;padding:5px 9px;border-radius:999px;background:#eafbf5;color:#047857;font-weight:800;font-size:11px}
-    .proof{width:38px;height:38px;object-fit:cover;border-radius:10px;border:1px solid var(--line);cursor:pointer}.no-proof{font-size:11px;color:#a0a8b6}
-    .btn-smx{width:32px;height:32px;border-radius:9px;padding:0;display:inline-grid;place-items:center}.btn-primary-soft{background:#efedff;color:var(--primary);border:1px solid #ddd9ff}.btn-danger-soft{background:#fff0f0;color:#dc2626;border:1px solid #ffd7d7}.btn-view{background:#172033;color:#fff;border:0;border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700}
-    .empty{padding:42px 20px;text-align:center;color:var(--muted)}
-    .modal-content{border:0;border-radius:22px;box-shadow:0 25px 70px rgba(15,23,42,.2);overflow:hidden}.modal-header{border-bottom:1px solid var(--line);padding:18px 20px}.modal-body{padding:20px}.profile-head{display:flex;gap:14px;align-items:center}.big-avatar{width:58px;height:58px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(135deg,var(--primary),var(--primary-2));color:white;font-size:20px;font-weight:800}.profile-name{font-size:20px;font-weight:800}.profile-meta{font-size:12px;color:var(--muted)}.mini-stat{padding:13px;border:1px solid var(--line);border-radius:14px;background:#fbfcfe}.mini-label{font-size:11px;color:var(--muted)}.mini-value{font-size:19px;font-weight:800;margin-top:3px}.student-table{font-size:12px}.student-table th{color:var(--muted);font-weight:700;background:#fafbfc}.student-table td,.student-table th{padding:10px;border-bottom:1px solid #edf1f6}
-    .loading{opacity:.55;pointer-events:none}.toastx{position:fixed;right:20px;bottom:20px;z-index:100;display:none;padding:12px 16px;border-radius:12px;background:#172033;color:white;box-shadow:var(--shadow);font-size:13px}
-    @media(max-width:767px){.page{padding:20px 14px}.hero{align-items:flex-start;flex-direction:column}.hero .actions{width:100%}.hero .actions a,.hero .actions button{flex:1}.chart-box{height:175px}.table thead th,.table tbody td{padding:10px}.hide-mobile{display:none!important}.topbar{height:64px}}
-  </style>
-</head>
-<body>
-  <header class="topbar d-flex align-items-center">
-    <div class="container-fluid px-3 px-md-4 d-flex align-items-center justify-content-between">
-      <div class="d-flex align-items-center gap-3">
-        <div class="brand-mark"><i data-lucide="heart-handshake" width="21"></i></div>
-        <div><div class="fw-bold" style="font-size:16px;line-height:1">Volunteer Admin</div><div style="font-size:11px;color:#8a94a6;margin-top:4px">Student Analytics Dashboard</div></div>
+    <!DOCTYPE html>
+    <html lang="th">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Volunteer Pro Admin Dashboard</title>
+      
+      <!-- Typography & UI Frameworks -->
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+      <script src="https://unpkg.com/lucide@latest"></script>
+      <!-- Chart.js -->
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+      <style>
+        :root {
+          --bg-main: #f8fafc;
+          --border-color: #e2e8f0;
+          --primary-color: #4f46e5;
+          --primary-hover: #4338ca;
+          --card-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.03), 0 4px 6px -4px rgba(15, 23, 42, 0.02);
+        }
+
+        body {
+          font-family: 'Sarabun', 'Plus Jakarta Sans', sans-serif;
+          background-color: var(--bg-main);
+          color: #1e293b;
+        }
+
+        .navbar {
+          background: rgba(255, 255, 255, 0.85);
+          backdrop-filter: blur(12px);
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .brand-icon {
+          width: 40px;
+          height: 40px;
+          background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+          color: white;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
+        }
+
+        .card {
+          border: 1px solid var(--border-color);
+          border-radius: 20px;
+          box-shadow: var(--card-shadow);
+          background: #ffffff;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .stat-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 20px -5px rgba(15, 23, 42, 0.08);
+        }
+
+        .stat-icon {
+          width: 52px;
+          height: 52px;
+          border-radius: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .table-card {
+          overflow: hidden;
+        }
+
+        .table > :not(caption) > * > * {
+          padding: 1rem 1.25rem;
+          border-bottom-color: #f1f5f9;
+        }
+
+        .table thead th {
+          font-size: 0.75rem;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: #64748b;
+          font-weight: 700;
+          background-color: #f8fafc;
+        }
+
+        .img-thumb {
+          width: 46px;
+          height: 46px;
+          object-fit: cover;
+          border-radius: 12px;
+          cursor: pointer;
+          border: 1px solid #e2e8f0;
+          transition: transform 0.2s ease;
+        }
+
+        .img-thumb:hover {
+          transform: scale(1.1);
+        }
+
+        .badge-faculty {
+          font-size: 0.75rem;
+          padding: 0.4em 0.8em;
+          border-radius: 8px;
+          font-weight: 600;
+        }
+
+        .badge-hours {
+          background-color: #ecfdf5;
+          color: #047857;
+          border: 1px solid #a7f3d0;
+          font-weight: 700;
+          padding: 0.4em 0.8em;
+          border-radius: 30px;
+        }
+
+        .btn-action {
+          width: 34px;
+          height: 34px;
+          padding: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 8px;
+        }
+
+        .chart-container {
+          position: relative;
+          height: 260px;
+          width: 100%;
+        }
+
+        .modal-content {
+          border-radius: 20px;
+          border: none;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+      </style>
+    </head>
+    <body>
+
+      <!-- Navbar -->
+      <nav class="navbar navbar-expand-lg sticky-top py-3">
+        <div class="container-fluid px-4">
+          <a class="navbar-brand d-flex align-items-center gap-3 fw-bold text-dark" href="#">
+            <div class="brand-icon">
+              <i data-lucide="heart-handshake" style="width:22px;"></i>
+            </div>
+            <div>
+              <div class="fs-5 lh-1">Volunteer Admin</div>
+              <span class="text-muted fw-normal" style="font-size:0.75rem;">ระบบจัดการชั่วโมงจิตอาสา</span>
+            </div>
+          </a>
+          <div class="d-flex gap-2">
+            <a href="/admin/export-excel" class="btn btn-outline-success d-flex align-items-center gap-2 px-3" style="border-radius:12px; font-weight:500;">
+              <i data-lucide="file-spreadsheet" style="width:18px;"></i> Export Excel
+            </a>
+            <button class="btn btn-primary d-flex align-items-center gap-2 px-3" style="border-radius:12px; background:var(--primary-color); font-weight:500;" onclick="loadData()">
+              <i data-lucide="refresh-cw" style="width:18px;"></i> รีเฟรช
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <div class="container-fluid px-4 py-4">
+        
+        <!-- Summary Cards -->
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-md-4">
+            <div class="card stat-card p-3">
+              <div class="d-flex align-items-center justify-content-between">
+                <div>
+                  <div class="text-muted small fw-semibold mb-1">จำนวนการบันทึกทั้งหมด</div>
+                  <h2 class="fw-bold mb-0 text-dark" id="statCount">0</h2>
+                </div>
+                <div class="stat-icon bg-primary-subtle text-primary">
+                  <i data-lucide="clipboard-list" style="width:26px; height:26px;"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="card stat-card p-3">
+              <div class="d-flex align-items-center justify-content-between">
+                <div>
+                  <div class="text-muted small fw-semibold mb-1">ชั่วโมงสะสมรวมทั้งหมด</div>
+                  <h2 class="fw-bold mb-0 text-success" id="statHours">0 <small class="fs-6">ชม.</small></h2>
+                </div>
+                <div class="stat-icon bg-success-subtle text-success">
+                  <i data-lucide="clock" style="width:26px; height:26px;"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="card stat-card p-3">
+              <div class="d-flex align-items-center justify-content-between">
+                <div>
+                  <div class="text-muted small fw-semibold mb-1">นักศึกษาที่เข้าร่วม</div>
+                  <h2 class="fw-bold mb-0 text-indigo" id="statStudents">0 <small class="fs-6">คน</small></h2>
+                </div>
+                <div class="stat-icon bg-warning-subtle text-warning">
+                  <i data-lucide="users" style="width:26px; height:26px;"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-lg-7">
+            <div class="card p-3">
+              <h6 class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
+                <i data-lucide="bar-chart-3" class="text-primary" style="width:18px;"></i> สรุปชั่วโมงจำแนกตามคณะ
+              </h6>
+              <div class="chart-container">
+                <canvas id="facultyChart"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-5">
+            <div class="card p-3">
+              <h6 class="fw-bold text-dark mb-3 d-flex align-items-center gap-2">
+                <i data-lucide="pie-chart" class="text-primary" style="width:18px;"></i> สัดส่วนจำนวนครั้งการเข้าร่วม
+              </h6>
+              <div class="chart-container">
+                <canvas id="ratioChart"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter & Search Box -->
+        <div class="card p-3 mb-4">
+          <div class="row g-3">
+            <div class="col-12 col-md-8">
+              <div class="input-group">
+                <span class="input-group-text bg-white border-end-0 pe-0" style="border-radius: 12px 0 0 12px; border-color: #cbd5e1;">
+                  <i data-lucide="search" class="text-muted" style="width:18px;"></i>
+                </span>
+                <input type="text" id="searchInput" class="form-control border-start-0" style="border-radius: 0 12px 12px 0; border-color: #cbd5e1;" placeholder="ค้นหาด้วย รหัสนักศึกษา, ชื่อ-นามสกุล หรือกิจกรรม..." onkeyup="filterTable()">
+              </div>
+            </div>
+            <div class="col-12 col-md-4">
+              <select id="facultyFilter" class="form-select" style="border-radius: 12px; border-color: #cbd5e1;" onchange="filterTable()">
+                <option value="">🏛️ แสดงทุกคณะ</option>
+                <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
+                <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
+                <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="card table-card">
+          <div class="table-responsive">
+            <table class="table align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>หลักฐาน</th>
+                  <th>ข้อมูลนักศึกษา</th>
+                  <th>คณะ</th>
+                  <th>ชื่อกิจกรรม</th>
+                  <th>ชั่วโมง</th>
+                  <th>วันที่บันทึก</th>
+                  <th class="text-end">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody id="recordTableBody">
+                <tr><td colspan="7" class="text-center py-5 text-muted">กำลังโหลดข้อมูล...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
-      <div class="d-flex gap-2">
-        <a href="/admin/export-excel" class="btn btn-sm btn-outline-success rounded-3 d-flex align-items-center gap-2 px-3"><i data-lucide="download" width="15"></i><span class="hide-mobile">Export</span></a>
-        <button class="btn btn-sm btn-dark rounded-3 d-flex align-items-center gap-2 px-3" onclick="loadData()"><i data-lucide="refresh-cw" width="15"></i><span class="hide-mobile">รีเฟรช</span></button>
-      </div>
-    </div>
-  </header>
 
-  <main class="page">
-    <section class="hero">
-      <div><div class="eyebrow">Overview</div><h1>แดชบอร์ดชั่วโมงจิตอาสา</h1><p>ดูภาพรวมและกดที่นักศึกษาเพื่อเปิดรายละเอียดรายบุคคล</p></div>
-      <div class="actions d-flex gap-2"></div>
-    </section>
-
-    <section class="row g-3 mb-3">
-      <div class="col-6 col-xl-3"><div class="cardx stat"><div class="stat-label">รายการทั้งหมด</div><div class="stat-value" id="statCount">0</div><div class="stat-icon icon-purple"><i data-lucide="clipboard-list" width="19"></i></div></div></div>
-      <div class="col-6 col-xl-3"><div class="cardx stat"><div class="stat-label">ชั่วโมงสะสม</div><div class="stat-value" id="statHours">0</div><div class="stat-icon icon-green"><i data-lucide="clock-3" width="19"></i></div></div></div>
-      <div class="col-6 col-xl-3"><div class="cardx stat"><div class="stat-label">นักศึกษาที่เข้าร่วม</div><div class="stat-value" id="statStudents">0</div><div class="stat-icon icon-blue"><i data-lucide="users" width="19"></i></div></div></div>
-      <div class="col-6 col-xl-3"><div class="cardx stat"><div class="stat-label">ชั่วโมงเฉลี่ย / รายการ</div><div class="stat-value" id="statAverage">0</div><div class="stat-icon icon-orange"><i data-lucide="trending-up" width="19"></i></div></div></div>
-    </section>
-
-    <section class="row g-3 mb-3">
-      <div class="col-12 col-lg-7"><div class="cardx panel"><div class="panel-head"><div><div class="panel-title">ชั่วโมงรวมแยกตามคณะ</div><div class="panel-sub">เปรียบเทียบชั่วโมงสะสมของแต่ละคณะ</div></div><i data-lucide="bar-chart-3" width="18" style="color:var(--primary)"></i></div><div class="chart-box"><canvas id="facultyChart"></canvas></div></div></div>
-      <div class="col-12 col-lg-5"><div class="cardx panel"><div class="panel-head"><div><div class="panel-title">สัดส่วนการบันทึก</div><div class="panel-sub">จำนวนรายการของแต่ละคณะ</div></div><i data-lucide="pie-chart" width="18" style="color:var(--primary)"></i></div><div class="chart-box donut"><canvas id="ratioChart"></canvas></div></div></div>
-    </section>
-
-    <section class="cardx table-panel">
-      <div class="toolbar border-bottom">
-        <div class="row g-2 align-items-center">
-          <div class="col-12 col-lg-7"><div class="search-wrap"><i data-lucide="search"></i><input id="searchInput" class="form-control" placeholder="ค้นหารหัสนักศึกษา ชื่อ คณะ หรือกิจกรรม..." oninput="filterTable()"></div></div>
-          <div class="col-8 col-lg-3"><select id="facultyFilter" class="form-select" onchange="filterTable()"><option value="">ทุกคณะ</option><option value="01">01 • วิทยาศาสตร์ฯ</option><option value="02">02 • บริหารธุรกิจฯ</option><option value="03">03 • วิศวกรรมศาสตร์</option></select></div>
-          <div class="col-4 col-lg-2 text-end"><span id="resultCount" class="panel-sub"></span></div>
+      <!-- Modal ขยายรูป -->
+      <div class="modal fade" id="imageModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content border-0 bg-transparent">
+            <div class="modal-body text-center p-0">
+              <img id="modalImg" src="" class="img-fluid rounded-4 shadow-lg" alt="รูปหลักฐาน">
+            </div>
+          </div>
         </div>
       </div>
-      <div class="table-responsive">
-        <table class="table mb-0 align-middle">
-          <thead><tr><th>หลักฐาน</th><th>นักศึกษา</th><th>คณะ</th><th>กิจกรรม</th><th>ชั่วโมง</th><th>วันที่</th><th class="text-end">จัดการ</th></tr></thead>
-          <tbody id="recordTableBody"><tr><td colspan="7" class="empty">กำลังโหลดข้อมูล...</td></tr></tbody>
-        </table>
+
+      <!-- Modal แก้ไขข้อมูล -->
+      <div class="modal fade" id="editModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content p-2">
+            <div class="modal-header border-0 pb-0">
+              <h5 class="modal-header-title fw-bold">✏️ แก้ไขข้อมูลบันทึกจิตอาสา</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <form id="editForm">
+                <input type="hidden" id="editId">
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">คณะ</label>
+                  <select id="editFacultyCode" class="form-select" required style="border-radius:10px;">
+                    <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
+                    <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
+                    <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">รหัสนักศึกษา</label>
+                  <input type="text" id="editStudentId" class="form-control" required style="border-radius:10px;">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">ชื่อ-นามสกุล</label>
+                  <input type="text" id="editName" class="form-control" required style="border-radius:10px;">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">จำนวนชั่วโมง</label>
+                  <input type="number" id="editHours" class="form-control" min="0.5" step="0.5" required style="border-radius:10px;">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label text-muted small fw-bold">ชื่อกิจกรรม</label>
+                  <input type="text" id="editActivityName" class="form-control" required style="border-radius:10px;">
+                </div>
+                <div class="d-flex justify-content-end gap-2 pt-2">
+                  <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="border-radius:10px;">ยกเลิก</button>
+                  <button type="submit" class="btn btn-primary" style="border-radius:10px; background:var(--primary-color);">บันทึกการเปลี่ยนแปลง</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
       </div>
-    </section>
-  </main>
 
-  <div class="modal fade" id="studentModal" tabindex="-1"><div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div class="profile-head"><div class="big-avatar" id="studentAvatar">?</div><div><div class="profile-name" id="studentModalName">ข้อมูลนักศึกษา</div><div class="profile-meta" id="studentModalMeta"></div></div></div><button class="btn-close ms-auto" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="row g-2 mb-3"><div class="col-4"><div class="mini-stat"><div class="mini-label">ชั่วโมงสะสม</div><div class="mini-value text-success" id="studentTotalHours">0</div></div></div><div class="col-4"><div class="mini-stat"><div class="mini-label">จำนวนรายการ</div><div class="mini-value" id="studentRecordCount">0</div></div></div><div class="col-4"><div class="mini-stat"><div class="mini-label">ค่าเฉลี่ย / รายการ</div><div class="mini-value" id="studentAverage">0</div></div></div></div><div class="table-responsive"><table class="w-100 student-table"><thead><tr><th>วันที่</th><th>กิจกรรม</th><th>ชั่วโมง</th><th>หลักฐาน</th></tr></thead><tbody id="studentRecordsBody"></tbody></table></div></div></div></div></div>
+      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+      <script>
+        let allRecords = [];
+        let facultyChart = null;
+        let ratioChart = null;
 
-  <div class="modal fade" id="imageModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content bg-transparent shadow-none"><div class="modal-body p-0 text-center"><img id="modalImg" src="" class="img-fluid rounded-4" style="max-height:80vh" alt="รูปหลักฐาน"></div></div></div></div>
+        async function loadData() {
+          try {
+            const res = await fetch('/api/admin/records');
+            const result = await res.json();
+            if (result.success) {
+              allRecords = result.data;
+              updateStats(allRecords);
+              renderCharts(allRecords);
+              renderData(allRecords);
+            }
+          } catch (err) {
+            alert('ไม่สามารถดึงข้อมูลได้');
+          }
+        }
 
-  <div class="modal fade" id="editModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h5 class="fw-bold mb-0">แก้ไขข้อมูลบันทึกจิตอาสา</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><form id="editForm"><input type="hidden" id="editId"><div class="mb-3"><label class="form-label small fw-bold">คณะ</label><select id="editFacultyCode" class="form-select" required><option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option><option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option><option value="03">03 - คณะวิศวกรรมศาสตร์</option></select></div><div class="mb-3"><label class="form-label small fw-bold">รหัสนักศึกษา</label><input type="text" id="editStudentId" class="form-control" required></div><div class="mb-3"><label class="form-label small fw-bold">ชื่อ-นามสกุล</label><input type="text" id="editName" class="form-control" required></div><div class="mb-3"><label class="form-label small fw-bold">จำนวนชั่วโมง</label><input type="number" id="editHours" class="form-control" min="0.5" step="0.5" required></div><div class="mb-3"><label class="form-label small fw-bold">ชื่อกิจกรรม</label><input type="text" id="editActivityName" class="form-control" required></div><div class="d-flex justify-content-end gap-2"><button type="button" class="btn btn-light" data-bs-dismiss="modal">ยกเลิก</button><button type="submit" class="btn btn-dark">บันทึกการเปลี่ยนแปลง</button></div></form></div></div></div></div>
-  <div class="toastx" id="toastx"></div>
+        function updateStats(data) {
+          document.getElementById('statCount').innerText = data.length.toLocaleString();
+          
+          const totalHours = data.reduce((sum, item) => sum + (item.hours || 0), 0);
+          document.getElementById('statHours').innerText = totalHours.toLocaleString();
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    let allRecords = [];
-    let facultyChart = null;
-    let ratioChart = null;
+          const uniqueStudents = new Set(data.map(item => item.studentId)).size;
+          document.getElementById('statStudents').innerText = uniqueStudents.toLocaleString();
+        }
 
-    const FACULTIES = {
-      '01':'คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร',
-      '02':'คณะบริหารธุรกิจและศิลปศาสตร์',
-      '03':'คณะวิศวกรรมศาสตร์'
-    };
+        function renderCharts(data) {
+          const facultyHours = { '01': 0, '02': 0, '03': 0 };
+          const facultyCounts = { '01': 0, '02': 0, '03': 0 };
 
-    function esc(value){
-      return String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-    }
+          data.forEach(item => {
+            if (facultyHours[item.facultyCode] !== undefined) {
+              facultyHours[item.facultyCode] += (item.hours || 0);
+              facultyCounts[item.facultyCode] += 1;
+            }
+          });
 
-    function initials(name){
-      const t = (name || '?').trim().split(/\\s+/).filter(Boolean);
-      return t.length ? t.slice(0,2).map(x => x[0]).join('').toUpperCase() : '?';
-    }
+          // 1. Bar Chart (ชั่วโมงรวมแต่ละคณะ)
+          const ctxBar = document.getElementById('facultyChart').getContext('2d');
+          if (facultyChart) facultyChart.destroy();
+          facultyChart = new Chart(ctxBar, {
+            type: 'bar',
+            data: {
+              labels: ['วิทยาศาสตร์ฯ (01)', 'บริหารธุรกิจฯ (02)', 'วิศวกรรมศาสตร์ (03)'],
+              datasets: [{
+                label: 'ชั่วโมงสะสม',
+                data: [facultyHours['01'], facultyHours['02'], facultyHours['03']],
+                backgroundColor: ['rgba(16, 185, 129, 0.85)', 'rgba(79, 70, 229, 0.85)', 'rgba(245, 158, 11, 0.85)'],
+                borderRadius: 8
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: { y: { beginAtZero: true } }
+            }
+          });
 
-    function showToast(message){
-      const el=document.getElementById('toastx'); el.textContent=message; el.style.display='block';
-      clearTimeout(window.__toast); window.__toast=setTimeout(()=>el.style.display='none',2200);
-    }
+          // 2. Doughnut Chart (สัดส่วนจำนวนครั้ง)
+          const ctxDoughnut = document.getElementById('ratioChart').getContext('2d');
+          if (ratioChart) ratioChart.destroy();
+          ratioChart = new Chart(ctxDoughnut, {
+            type: 'doughnut',
+            data: {
+              labels: ['คณะ 01', 'คณะ 02', 'คณะ 03'],
+              datasets: [{
+                data: [facultyCounts['01'], facultyCounts['02'], facultyCounts['03']],
+                backgroundColor: ['#10b981', '#4f46e5', '#f59e0b']
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom' } }
+            }
+          });
+        }
 
-    async function loadData(){
-      document.body.classList.add('loading');
-      try{
-        const res=await fetch('/api/admin/records'); const result=await res.json();
-        if(!result.success) throw new Error(result.error || 'โหลดข้อมูลไม่สำเร็จ');
-        allRecords=result.data || [];
-        updateStats(allRecords); renderCharts(allRecords); renderData(allRecords);
-      }catch(err){ console.error(err); alert('ไม่สามารถดึงข้อมูลได้'); }
-      finally{ document.body.classList.remove('loading'); lucide.createIcons(); }
-    }
+        function renderData(data) {
+          const tbody = document.getElementById('recordTableBody');
+          tbody.innerHTML = '';
 
-    function updateStats(data){
-      const totalHours=data.reduce((s,r)=>s+(Number(r.hours)||0),0);
-      const students=new Set(data.map(r=>r.studentId).filter(Boolean)).size;
-      document.getElementById('statCount').textContent=data.length.toLocaleString();
-      document.getElementById('statHours').textContent=totalHours.toLocaleString();
-      document.getElementById('statStudents').textContent=students.toLocaleString();
-      document.getElementById('statAverage').textContent=data.length ? (totalHours/data.length).toFixed(1) : '0';
-    }
+          if (data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted">ไม่พบข้อมูลบันทึก</td></tr>';
+            return;
+          }
 
-    function renderCharts(data){
-      const hours={'01':0,'02':0,'03':0}; const counts={'01':0,'02':0,'03':0};
-      data.forEach(r=>{ if(hours[r.facultyCode]!==undefined){hours[r.facultyCode]+=Number(r.hours)||0; counts[r.facultyCode]++;} });
-      if(facultyChart) facultyChart.destroy(); if(ratioChart) ratioChart.destroy();
-      facultyChart=new Chart(document.getElementById('facultyChart'),{
-        type:'bar',data:{labels:['วิทยาศาสตร์ฯ','บริหารธุรกิจฯ','วิศวกรรมศาสตร์'],datasets:[{data:[hours['01'],hours['02'],hours['03']],borderRadius:7,barThickness:26}]},
-        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{displayColors:false,callbacks:{label:c=>\` \${c.raw} ชั่วโมง\`}}},scales:{x:{grid:{display:false},ticks:{font:{size:10}}},y:{beginAtZero:true,grid:{color:'#eef1f6'},ticks:{font:{size:10}}}}}
-      });
-      ratioChart=new Chart(document.getElementById('ratioChart'),{
-        type:'doughnut',data:{labels:['วิทยาศาสตร์ฯ','บริหารธุรกิจฯ','วิศวกรรมศาสตร์'],datasets:[{data:[counts['01'],counts['02'],counts['03']],borderWidth:0,spacing:3}]},
-        options:{responsive:true,maintainAspectRatio:false,cutout:'70%',plugins:{legend:{position:'bottom',labels:{boxWidth:9,usePointStyle:true,padding:12,font:{size:10}}}}}
-      });
-    }
+          const facultyColors = {
+            '01': 'bg-success-subtle text-success border-success-subtle',
+            '02': 'bg-primary-subtle text-primary border-primary-subtle',
+            '03': 'bg-warning-subtle text-warning-emphasis border-warning-subtle'
+          };
 
-    function renderData(data){
-      const tbody=document.getElementById('recordTableBody'); tbody.innerHTML='';
-      document.getElementById('resultCount').textContent=\`\${data.length.toLocaleString()} รายการ\`;
-      if(!data.length){tbody.innerHTML='<tr><td colspan="7" class="empty">ไม่พบข้อมูลที่ค้นหา</td></tr>';return;}
-      data.forEach(item=>{
-        const d=item.date?new Date(item.date):null;
-        const dateStr=d&&!isNaN(d)?d.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'numeric'}):'-';
-        const timeStr=d&&!isNaN(d)?d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}):'';
-        const tr=document.createElement('tr');
-        tr.innerHTML=\`
-          <td>\${item.imageUrl?\`<img src="\${esc(item.imageUrl)}" class="proof" onclick="showImage('\${encodeURIComponent(item.imageUrl)}')">\`:'<span class="no-proof">ไม่มีรูป</span>'}</td>
-          <td><div class="d-flex align-items-center gap-2"><div class="avatar">\${esc(initials(item.name))}</div><button class="student-btn" onclick="openStudent('\${encodeURIComponent(item.studentId || '')}')"><div class="student-name">\${esc(item.name || 'ไม่ระบุชื่อ')}</div><div class="student-id">\${esc(item.studentId || '-')}</div></button></div></td>
-          <td><span class="faculty-badge">\${esc(item.facultyCode || '-')} • \${esc(item.facultyName || 'ไม่ระบุคณะ')}</span></td>
-          <td><div class="fw-semibold" style="font-size:13px">\${esc(item.activityName || 'ไม่ระบุกิจกรรม')}</div></td>
-          <td><span class="hours-badge">+\${esc(item.hours)} ชม.</span></td>
-          <td><div style="font-size:12px;font-weight:700">\${dateStr}</div><div style="font-size:10px;color:#98a1b1">\${timeStr}</div></td>
-          <td class="text-end"><button class="btn-smx btn-primary-soft me-1" onclick="openEditModal('\${esc(item._id)}')" title="แก้ไข"><i data-lucide="pencil" width="14"></i></button><button class="btn-smx btn-danger-soft" onclick="deleteRecord('\${esc(item._id)}')" title="ลบ"><i data-lucide="trash-2" width="14"></i></button></td>\`;
-        tbody.appendChild(tr);
-      });
-      lucide.createIcons();
-    }
+          data.forEach(item => {
+            const dateObj = new Date(item.date);
+            const dateStr = dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
+            const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 
-    function filterTable(){
-      const q=document.getElementById('searchInput').value.trim().toLowerCase(); const f=document.getElementById('facultyFilter').value;
-      renderData(allRecords.filter(item=>{
-        const hay=[item.studentId,item.name,item.facultyName,item.activityName].filter(Boolean).join(' ').toLowerCase();
-        return (!q || hay.includes(q)) && (!f || item.facultyCode===f);
-      }));
-    }
+            const imgHtml = item.imageUrl 
+              ? \`<img src="\${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('\${item.imageUrl}')">\`
+              : \`<span class="badge bg-light text-muted border py-2 px-2" style="font-size:11px;">ไม่มีรูป</span>\`;
 
-    async function openStudent(encodedId){
-      const studentId=decodeURIComponent(encodedId); if(!studentId)return;
-      try{
-        const res=await fetch('/api/admin/students/'+encodeURIComponent(studentId)); const result=await res.json();
-        if(!result.success) throw new Error(result.message || 'ไม่พบข้อมูล');
-        const s=result.data;
-        document.getElementById('studentAvatar').textContent=initials(s.name);
-        document.getElementById('studentModalName').textContent=s.name || 'ไม่ระบุชื่อ';
-        document.getElementById('studentModalMeta').textContent=\`รหัส \${s.studentId} • \${s.facultyName}\`;
-        document.getElementById('studentTotalHours').textContent=(s.totalHours||0).toLocaleString()+' ชม.';
-        document.getElementById('studentRecordCount').textContent=(s.totalRecords||0).toLocaleString()+' ครั้ง';
-        document.getElementById('studentAverage').textContent=s.totalRecords?(s.totalHours/s.totalRecords).toFixed(1)+' ชม.':'0';
-        const body=document.getElementById('studentRecordsBody'); body.innerHTML='';
-        s.records.forEach(r=>{
-          const d=r.date?new Date(r.date):null; const ds=d&&!isNaN(d)?d.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'numeric'}):'-';
-          const tr=document.createElement('tr'); tr.innerHTML=\`<td>\${ds}</td><td class="fw-semibold">\${esc(r.activityName||'ไม่ระบุกิจกรรม')}</td><td><span class="hours-badge">+\${esc(r.hours)} ชม.</span></td><td>\${r.imageUrl?\`<button class="btn btn-sm btn-light" onclick="showImage('\${encodeURIComponent(r.imageUrl)}')">ดูรูป</button>\`:'-'}</td>\`; body.appendChild(tr);
+            const facultyClass = facultyColors[item.facultyCode] || 'bg-light text-dark';
+            const facultyBadge = item.facultyCode 
+              ? \`<span class="badge badge-faculty border \${facultyClass}">[\${item.facultyCode}] \${item.facultyName || ''}</span>\`
+              : \`<span class="text-muted small">ไม่ระบุ</span>\`;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = \`
+              <td>\${imgHtml}</td>
+              <td>
+                <div class="fw-bold text-dark">\${item.name || 'ไม่ระบุชื่อ'}</div>
+                <div class="text-muted small">🆔 \${item.studentId}</div>
+              </td>
+              <td>\${facultyBadge}</td>
+              <td><div class="fw-medium text-dark">\${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
+              <td><span class="badge badge-hours">+\${item.hours} ชม.</span></td>
+              <td>
+                <div class="small fw-medium text-dark">\${dateStr}</div>
+                <div class="text-muted" style="font-size: 11px;">\${timeStr} น.</div>
+              </td>
+              <td class="text-end">
+                <button class="btn btn-action btn-outline-primary me-1" onclick="openEditModal('\${item._id}')" title="แก้ไข">
+                  <i data-lucide="edit-3" style="width:16px;"></i>
+                </button>
+                <button class="btn btn-action btn-outline-danger" onclick="deleteRecord('\${item._id}')" title="ลบ">
+                  <i data-lucide="trash-2" style="width:16px;"></i>
+                </button>
+              </td>
+            \`;
+            tbody.appendChild(tr);
+          });
+
+          lucide.createIcons();
+        }
+
+        function showModal(url) {
+          document.getElementById('modalImg').src = url;
+          new bootstrap.Modal(document.getElementById('imageModal')).show();
+        }
+
+        function openEditModal(id) {
+          const item = allRecords.find(r => r._id === id);
+          if (!item) return;
+
+          document.getElementById('editId').value = item._id;
+          document.getElementById('editFacultyCode').value = item.facultyCode || '01';
+          document.getElementById('editStudentId').value = item.studentId || '';
+          document.getElementById('editName').value = item.name || '';
+          document.getElementById('editHours').value = item.hours || 0;
+          document.getElementById('editActivityName').value = item.activityName || '';
+
+          new bootstrap.Modal(document.getElementById('editModal')).show();
+        }
+
+        document.getElementById('editForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const id = document.getElementById('editId').value;
+          const payload = {
+            facultyCode: document.getElementById('editFacultyCode').value,
+            studentId: document.getElementById('editStudentId').value,
+            name: document.getElementById('editName').value,
+            hours: document.getElementById('editHours').value,
+            activityName: document.getElementById('editActivityName').value
+          };
+
+          try {
+            const res = await fetch(\`/api/admin/records/\${id}\`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const result = await res.json();
+            if (result.success) {
+              bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+              loadData();
+            } else {
+              alert('แก้ไขไม่สำเร็จ: ' + result.message);
+            }
+          } catch (err) {
+            alert('เกิดข้อผิดพลาดในการส่งข้อมูล');
+          }
         });
-        new bootstrap.Modal(document.getElementById('studentModal')).show();
-      }catch(err){console.error(err);alert('ไม่สามารถโหลดข้อมูลนักศึกษาได้');}
-    }
 
-    function showImage(encoded){document.getElementById('modalImg').src=decodeURIComponent(encoded);new bootstrap.Modal(document.getElementById('imageModal')).show();}
+        async function deleteRecord(id) {
+          if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?')) return;
 
-    function openEditModal(id){
-      const item=allRecords.find(r=>r._id===id); if(!item)return;
-      document.getElementById('editId').value=item._id; document.getElementById('editFacultyCode').value=item.facultyCode||'01'; document.getElementById('editStudentId').value=item.studentId||''; document.getElementById('editName').value=item.name||''; document.getElementById('editHours').value=item.hours||0; document.getElementById('editActivityName').value=item.activityName||'';
-      new bootstrap.Modal(document.getElementById('editModal')).show();
-    }
+          try {
+            const res = await fetch(\`/api/admin/records/\${id}\`, { method: 'DELETE' });
+            const result = await res.json();
+            if (result.success) {
+              loadData();
+            } else {
+              alert('ลบไม่สำเร็จ: ' + result.message);
+            }
+          } catch (err) {
+            alert('เกิดข้อผิดพลาดในการลบข้อมูล');
+          }
+        }
 
-    document.getElementById('editForm').addEventListener('submit',async e=>{
-      e.preventDefault(); const id=document.getElementById('editId').value;
-      const payload={facultyCode:document.getElementById('editFacultyCode').value,studentId:document.getElementById('editStudentId').value,name:document.getElementById('editName').value,hours:document.getElementById('editHours').value,activityName:document.getElementById('editActivityName').value};
-      try{const res=await fetch('/api/admin/records/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const result=await res.json();if(!result.success)throw new Error(result.message);bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();showToast('บันทึกการแก้ไขแล้ว');loadData();}catch(err){alert('แก้ไขไม่สำเร็จ: '+(err.message||''));}
-    });
+        function filterTable() {
+          const searchText = document.getElementById('searchInput').value.toLowerCase();
+          const selectedFaculty = document.getElementById('facultyFilter').value;
 
-    async function deleteRecord(id){
-      if(!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?'))return;
-      try{const res=await fetch('/api/admin/records/'+id,{method:'DELETE'});const result=await res.json();if(!result.success)throw new Error(result.message);showToast('ลบข้อมูลแล้ว');loadData();}catch(err){alert('ลบไม่สำเร็จ: '+(err.message||''));}
-    }
+          const filtered = allRecords.filter(item => {
+            const matchSearch = item.studentId.toLowerCase().includes(searchText) || 
+                                (item.name && item.name.toLowerCase().includes(searchText)) ||
+                                (item.facultyName && item.facultyName.toLowerCase().includes(searchText)) ||
+                                (item.activityName && item.activityName.toLowerCase().includes(searchText));
+            
+            const matchFaculty = selectedFaculty === '' || item.facultyCode === selectedFaculty;
 
-    lucide.createIcons(); loadData();
-  </script>
-</body>
-</html>
+            return matchSearch && matchFaculty;
+          });
+
+          renderData(filtered);
+        }
+
+        loadData();
+      </script>
+    </body>
+    </html>
   `);
 });
 
+// ==========================================
 // 💬 LINE BOT HANDLER
 // ==========================================
 
