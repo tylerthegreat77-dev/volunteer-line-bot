@@ -45,24 +45,36 @@ const blobClient = line.messagingApi
 // Webhook LINE
 app.post('/webhook', line.middleware(config), async (req, res) => {
   try {
-    // 1. เพิ่ม log ตรงนี้ เพื่อเช็กว่ายิงมาถึงไหม ก่อนจะส่งไปเข้า handleEvent
-    console.log('--- WEBHOOK HIT ---', req.body.events);
+    console.log('--- WEBHOOK HIT ---', JSON.stringify(req.body.events, null, 2));
 
+    // 1. Safety Guard: เช็กว่ามี events ส่งมาจริงไหม ถ้าไม่มีให้ตอบ 200 OK กลับไปเลย
+    if (!req.body.events || !Array.isArray(req.body.events) || req.body.events.length === 0) {
+      return res.status(200).send('OK');
+    }
+
+    // 2. รัน handleEvent
     const results = await Promise.all(req.body.events.map(handleEvent));
     res.status(200).json(results);
   } catch (err) {
-    console.error('Webhook Error:', err);
-    res.status(500).end();
+    console.error('❌ Webhook Error:', err);
+    // ตอบ 200 เพื่อไม่ให้ LINE retry ยิงซ้ำเวลาเกิดข้อผิดพลาดภายใน
+    res.status(200).end();
   }
 });
 
+// Middleware สำหรับ Route อื่นๆ (ต้องอยู่ใต้ Webhook เท่านั้น)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// เชื่อมต่อ MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!'))
+// เชื่อมต่อ MongoDB (ใส่ Fallback URI สำรองป้องกัน MONGODB_URI ใน Render อ่านค่าไม่ได้)
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb+srv://volunteer_user:wfvZwcF3XuRdvhZy@cluster0.3rc3oyf.mongodb.net/volunteer_db?appName=Cluster0';
+
+mongoose.connect(MONGO_URI)
+  .then(() => {
+    console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!');
+    console.log('📌 DB Name ที่ใช้งานอยู่จริง:', mongoose.connection.name);
+  })
   .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
 
 // Schema สำหรับเก็บข้อมูลจิตอาสา
@@ -79,7 +91,6 @@ const volunteerSchema = new mongoose.Schema({
 });
 
 const Volunteer = mongoose.model('Volunteer', volunteerSchema, 'records');
-
 // Schema สำหรับเก็บรูปภาพชั่วคราว
 const tempImageSchema = new mongoose.Schema({
   userId: String,
