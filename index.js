@@ -32,7 +32,6 @@ const FACULTY_MAP = {
   '03': 'คณะวิศวกรรมศาสตร์'
 };
 
-const app = express();
 
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
