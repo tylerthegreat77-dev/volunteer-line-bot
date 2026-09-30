@@ -77,12 +77,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 const MONGO_URI = process.env.MONGODB_URI || 'mongodb+srv://volunteer_user:wfvZwcF3XuRdvhZy@cluster0.3rc3oyf.mongodb.net/volunteer_db?appName=Cluster0';
 
 mongoose.connect(MONGO_URI)
-  .then(() => {
+  .then(async () => {
     console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!');
     console.log('📌 DB Name ที่ใช้งานอยู่จริง:', mongoose.connection.name);
+    console.log('📌 MongoDB Host:', mongoose.connection.host);
+    console.log('📌 Collection ของ Volunteer:', Volunteer.collection.name);
+
+    const testCount = await Volunteer.countDocuments();
+    console.log('📌 จำนวน Volunteer ที่ Render เห็น:', testCount);
   })
   .catch((err) => console.error('❌ เชื่อมต่อ MongoDB ผิดพลาด:', err));
-
 // Schema สำหรับเก็บข้อมูลจิตอาสา
 const volunteerSchema = new mongoose.Schema({
   userId: String,
