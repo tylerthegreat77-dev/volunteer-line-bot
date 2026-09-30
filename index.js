@@ -4,6 +4,9 @@ require('dotenv').config();
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
+const cors = require('cors');
+app.use(cors()); // อนุญาตให้ทุกโดเมนยิง API เข้ามาได้
+
 const express = require('express');
 const line = require('@line/bot-sdk');
 const mongoose = require('mongoose');
@@ -107,9 +110,11 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
 app.get('/api/admin/records', async (req, res) => {
   try {
-    const records = await Volunteer.find().sort({ date: -1 });
+    // ปรับ sort ตาม field วันที่ที่มีจริงใน Schema (เช่น createdAt หรือ date)
+    const records = await Volunteer.find().sort({ createdAt: -1, date: -1 }).lean();
     res.json({ success: true, data: records });
   } catch (error) {
+    console.error('❌ Error fetching records:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
