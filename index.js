@@ -111,7 +111,7 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // ==========================================
 
 // API ดึงประวัติรายการจิตอาสาทั้งหมด
-app.get('/api/admin/records', async (req, res) => {
+app.get('/api/admin/records', async (req, res) => { console.log('🔥 ADMIN RECORD ROUTE ถูกเรียกแล้ว');
   try {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
