@@ -110,12 +110,18 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // 👑 ADMIN DASHBOARD & API
 // ==========================================
 
-// 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
+// API ดึงประวัติรายการจิตอาสาทั้งหมด
 app.get('/api/admin/records', async (req, res) => {
   try {
-    const records = await Volunteer.find().sort({ createdAt: -1, date: -1 }).lean();
+    // ปิด Cache เพื่อป้องกัน Browser ค้าง HTTP 304
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     
-    // ส่ง records ซึ่งเป็น Array ออกไปตรงๆ
+    // ดึงข้อมูลทั้งหมดจาก Collection 'records'
+    const records = await Volunteer.find().sort({ _id: -1 }).lean();
+    
+    console.log(`📊 Found ${records.length} records in Database`);
+
+    // ส่ง Array ออกไปตรงๆ
     res.json(records); 
   } catch (error) {
     console.error('❌ Error fetching records:', error);
@@ -571,9 +577,7 @@ app.get('/admin', (req, res) => {
             const result = await res.json();
             if (result.success) {
               allRecords = result.data;
-              updateStats(allRecords);
-              renderCharts(allRecords);
-              renderData(allRecords);
+              filterTable(); // เรียก filterTable เพื่ออัปเดต Views ทั้งหมดพร้อมกัน
             }
           } catch (err) {
             alert('ไม่สามารถดึงข้อมูลได้');
@@ -583,11 +587,11 @@ app.get('/admin', (req, res) => {
         function updateStats(data) {
           document.getElementById('statCount').innerText = data.length.toLocaleString();
           
-          const totalHours = data.reduce((sum, item) => sum + (item.hours || 0), 0);
-          document.getElementById('statHours').innerText = totalHours.toLocaleString();
+          const totalHours = data.reduce((sum, item) => sum + (parseFloat(item.hours) || 0), 0);
+          document.getElementById('statHours').innerHTML = \`\${totalHours.toLocaleString()} <small class="fs-6">ชม.</small>\`;
 
           const uniqueStudents = new Set(data.map(item => item.studentId)).size;
-          document.getElementById('statStudents').innerText = uniqueStudents.toLocaleString();
+          document.getElementById('statStudents').innerHTML = \`\${uniqueStudents.toLocaleString()} <small class="fs-6">คน</small>\`;
         }
 
         function renderCharts(data) {
@@ -596,7 +600,7 @@ app.get('/admin', (req, res) => {
 
           data.forEach(item => {
             if (facultyHours[item.facultyCode] !== undefined) {
-              facultyHours[item.facultyCode] += (item.hours || 0);
+              facultyHours[item.facultyCode] += (parseFloat(item.hours) || 0);
               facultyCounts[item.facultyCode] += 1;
             }
           });
@@ -660,8 +664,8 @@ app.get('/admin', (req, res) => {
 
           data.forEach(item => {
             const dateObj = new Date(item.date);
-            const dateStr = dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
-            const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+            const dateStr = !isNaN(dateObj) ? dateObj.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }) : '-';
+            const timeStr = !isNaN(dateObj) ? dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-';
 
             const imgHtml = item.imageUrl 
               ? \`<img src="\${item.imageUrl}" class="img-thumb shadow-sm" onclick="showModal('\${item.imageUrl}')">\`
@@ -677,7 +681,7 @@ app.get('/admin', (req, res) => {
               <td>\${imgHtml}</td>
               <td>
                 <div class="fw-bold text-dark">\${item.name || 'ไม่ระบุชื่อ'}</div>
-                <div class="text-muted small">🆔 \${item.studentId}</div>
+                <div class="text-muted small">🆔 \${item.studentId || '-'}</div>
               </td>
               <td>\${facultyBadge}</td>
               <td><div class="fw-medium text-dark">\${item.activityName || 'ไม่ระบุกิจกรรม'}</div></td>
@@ -698,7 +702,9 @@ app.get('/admin', (req, res) => {
             tbody.appendChild(tr);
           });
 
-          lucide.createIcons();
+          if (window.lucide) {
+            lucide.createIcons();
+          }
         }
 
         function showModal(url) {
@@ -727,7 +733,7 @@ app.get('/admin', (req, res) => {
             facultyCode: document.getElementById('editFacultyCode').value,
             studentId: document.getElementById('editStudentId').value,
             name: document.getElementById('editName').value,
-            hours: document.getElementById('editHours').value,
+            hours: parseFloat(document.getElementById('editHours').value),
             activityName: document.getElementById('editActivityName').value
           };
 
@@ -739,10 +745,12 @@ app.get('/admin', (req, res) => {
             });
             const result = await res.json();
             if (result.success) {
-              bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+              const modalEl = document.getElementById('editModal');
+              const modalInstance = bootstrap.Modal.getInstance(modalEl);
+              if (modalInstance) modalInstance.hide();
               loadData();
             } else {
-              alert('แก้ไขไม่สำเร็จ: ' + result.message);
+              alert('แก้ไขไม่สำเร็จ: ' + (result.message || 'เกิดข้อผิดพลาด'));
             }
           } catch (err) {
             alert('เกิดข้อผิดพลาดในการส่งข้อมูล');
@@ -758,7 +766,7 @@ app.get('/admin', (req, res) => {
             if (result.success) {
               loadData();
             } else {
-              alert('ลบไม่สำเร็จ: ' + result.message);
+              alert('ลบไม่สำเร็จ: ' + (result.message || 'เกิดข้อผิดพลาด'));
             }
           } catch (err) {
             alert('เกิดข้อผิดพลาดในการลบข้อมูล');
@@ -766,23 +774,32 @@ app.get('/admin', (req, res) => {
         }
 
         function filterTable() {
-          const searchText = document.getElementById('searchInput').value.toLowerCase();
+          const searchText = document.getElementById('searchInput').value.toLowerCase().trim();
           const selectedFaculty = document.getElementById('facultyFilter').value;
 
           const filtered = allRecords.filter(item => {
-            const matchSearch = item.studentId.toLowerCase().includes(searchText) || 
-                                (item.name && item.name.toLowerCase().includes(searchText)) ||
-                                (item.facultyName && item.facultyName.toLowerCase().includes(searchText)) ||
-                                (item.activityName && item.activityName.toLowerCase().includes(searchText));
+            const studentId = (item.studentId || '').toLowerCase();
+            const name = (item.name || '').toLowerCase();
+            const facultyName = (item.facultyName || '').toLowerCase();
+            const activityName = (item.activityName || '').toLowerCase();
+
+            const matchSearch = studentId.includes(searchText) || 
+                                name.includes(searchText) ||
+                                facultyName.includes(searchText) ||
+                                activityName.includes(searchText);
             
             const matchFaculty = selectedFaculty === '' || item.facultyCode === selectedFaculty;
 
             return matchSearch && matchFaculty;
           });
 
+          // อัปเดตส่วนแสดงผลทั้งหมดตามข้อมูลที่ถูก Filter
+          updateStats(filtered);
+          renderCharts(filtered);
           renderData(filtered);
         }
 
+        // เริ่มโหลดข้อมูล
         loadData();
       </script>
     </body>
