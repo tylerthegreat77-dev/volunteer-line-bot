@@ -149,7 +149,7 @@ app.get('/api/admin/records', async (req, res) => {
 });
 
 // 2. API แก้ไขข้อมูลรายการบันทึก (เพิ่มใหม่)
-app.put('/api/admin/records/:id', async (req, res) => {
+app.put('/api/admin/records/:id', async (req, res) => { console.log('🔥 ADMIN RECORD ROUTE ถูกเรียกแล้ว');
   try {
     const { id } = req.params;
     const { facultyCode, studentId, name, hours, activityName } = req.body;
