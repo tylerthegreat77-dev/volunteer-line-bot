@@ -113,9 +113,10 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // 1. API ดึงประวัติรายการจิตอาสาทั้งหมด
 app.get('/api/admin/records', async (req, res) => {
   try {
-    // ปรับ sort ตาม field วันที่ที่มีจริงใน Schema (เช่น createdAt หรือ date)
     const records = await Volunteer.find().sort({ createdAt: -1, date: -1 }).lean();
-    res.json({ success: true, data: records });
+    
+    // ส่ง records ซึ่งเป็น Array ออกไปตรงๆ
+    res.json(records); 
   } catch (error) {
     console.error('❌ Error fetching records:', error);
     res.status(500).json({ success: false, error: error.message });
