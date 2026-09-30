@@ -4,15 +4,19 @@ require('dotenv').config();
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-const cors = require('cors');
-app.use(cors()); // อนุญาตให้ทุกโดเมนยิง API เข้ามาได้
-
 const express = require('express');
+const cors = require('cors');
 const line = require('@line/bot-sdk');
 const mongoose = require('mongoose');
 const path = require('path');
 const ExcelJS = require('exceljs');
 const cloudinary = require('cloudinary').v2;
+
+// 1. ประกาศตัวแปร app ก่อน
+const app = express();
+
+// 2. ค่อยเรียกใช้งาน cors และ middleware อื่นๆ ผ่าน app
+app.use(cors());
 
 // 🔑 ตั้งค่า Cloudinary
 cloudinary.config({
