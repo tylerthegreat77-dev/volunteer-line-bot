@@ -113,19 +113,38 @@ const TempImage = mongoose.model('TempImage', tempImageSchema);
 // API ดึงประวัติรายการจิตอาสาทั้งหมด
 app.get('/api/admin/records', async (req, res) => {
   try {
-    // ปิด Cache เพื่อป้องกัน Browser ค้าง HTTP 304
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    
-    // ดึงข้อมูลทั้งหมดจาก Collection 'records'
-    const records = await Volunteer.find().sort({ _id: -1 }).lean();
-    
-    console.log(`📊 Found ${records.length} records in Database`);
 
-    // ส่ง Array ออกไปตรงๆ
-    res.json(records); 
+    console.log('========== ADMIN RECORD DEBUG ==========');
+    console.log('DB Name:', mongoose.connection.name);
+    console.log('Collection Name:', Volunteer.collection.name);
+
+    const collections = await mongoose.connection.db.listCollections().toArray();
+
+    console.log(
+      'Collections:',
+      collections.map(c => c.name)
+    );
+
+    const count = await Volunteer.countDocuments();
+
+    console.log('Volunteer count:', count);
+
+    const records = await Volunteer.find()
+      .sort({ _id: -1 })
+      .lean();
+
+    console.log('Found records:', records.length);
+    console.log('========================================');
+
+    res.json(records);
+
   } catch (error) {
     console.error('❌ Error fetching records:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
