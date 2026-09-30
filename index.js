@@ -576,15 +576,19 @@ app.get('/admin', (req, res) => {
     const res = await fetch('/api/admin/records');
 
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+      throw new Error('HTTP ' + res.status);
     }
 
     const result = await res.json();
 
-    // API ปัจจุบันส่ง Array ออกมาโดยตรง
-    allRecords = Array.isArray(result)
-      ? result
-      : (Array.isArray(result.data) ? result.data : []);
+    // API ส่ง Array ออกมาโดยตรง
+    if (Array.isArray(result)) {
+      allRecords = result;
+    } else if (Array.isArray(result.data)) {
+      allRecords = result.data;
+    } else {
+      allRecords = [];
+    }
 
     console.log('โหลดข้อมูลสำเร็จ:', allRecords.length, 'รายการ');
 
@@ -592,18 +596,7 @@ app.get('/admin', (req, res) => {
 
   } catch (err) {
     console.error('โหลดข้อมูล Dashboard ไม่สำเร็จ:', err);
-
-    const tbody = document.getElementById('recordTableBody');
-
-    if (tbody) {
-      tbody.innerHTML = `
-        <tr>
-          <td colspan="7" class="text-center py-5 text-danger">
-            ไม่สามารถโหลดข้อมูลได้: ${err.message}
-          </td>
-        </tr>
-      `;
-    }
+    alert('ไม่สามารถดึงข้อมูลได้: ' + err.message);
   }
 }
 
