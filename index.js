@@ -571,18 +571,41 @@ app.get('/admin', (req, res) => {
         let facultyChart = null;
         let ratioChart = null;
 
-        async function loadData() {
-          try {
-            const res = await fetch('/api/admin/records');
-            const result = await res.json();
-            if (result.success) {
-              allRecords = result.data;
-              filterTable(); // เรียก filterTable เพื่ออัปเดต Views ทั้งหมดพร้อมกัน
-            }
-          } catch (err) {
-            alert('ไม่สามารถดึงข้อมูลได้');
-          }
-        }
+       async function loadData() {
+  try {
+    const res = await fetch('/api/admin/records');
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const result = await res.json();
+
+    // API ปัจจุบันส่ง Array ออกมาโดยตรง
+    allRecords = Array.isArray(result)
+      ? result
+      : (Array.isArray(result.data) ? result.data : []);
+
+    console.log('โหลดข้อมูลสำเร็จ:', allRecords.length, 'รายการ');
+
+    filterTable();
+
+  } catch (err) {
+    console.error('โหลดข้อมูล Dashboard ไม่สำเร็จ:', err);
+
+    const tbody = document.getElementById('recordTableBody');
+
+    if (tbody) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="text-center py-5 text-danger">
+            ไม่สามารถโหลดข้อมูลได้: ${err.message}
+          </td>
+        </tr>
+      `;
+    }
+  }
+}
 
         function updateStats(data) {
           document.getElementById('statCount').innerText = data.length.toLocaleString();
