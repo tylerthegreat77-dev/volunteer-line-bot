@@ -504,6 +504,7 @@ app.get('/admin', (req, res) => {
                 <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
                 <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
                 <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
+                <option value="01">01 - คณะสหวิทยาการ</option>
               </select>
             </div>
           </div>
@@ -561,6 +562,7 @@ app.get('/admin', (req, res) => {
                     <option value="01">01 - คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร</option>
                     <option value="02">02 - คณะบริหารธุรกิจและศิลปศาสตร์</option>
                     <option value="03">03 - คณะวิศวกรรมศาสตร์</option>
+                    <option value="03">03 - คณะสหวิทยาการ</option>
                   </select>
                 </div>
                 <div class="mb-3">
@@ -673,10 +675,10 @@ app.get('/admin', (req, res) => {
           ratioChart = new Chart(ctxDoughnut, {
             type: 'doughnut',
             data: {
-              labels: ['คณะ 01', 'คณะ 02', 'คณะ 03'],
+              labels: ['คณะ 01', 'คณะ 02', 'คณะ 03', 'คณะ 04'],
               datasets: [{
-                data: [facultyCounts['01'], facultyCounts['02'], facultyCounts['03']],
-                backgroundColor: ['#10b981', '#4f46e5', '#f59e0b']
+                data: [facultyCounts['01'], facultyCounts['02'], facultyCounts['03'], facultyCounts['04']],
+                backgroundColor: ['#10b981', '#4f46e5', '#f59e0b', '#3af50b']
               }]
             },
             options: {
