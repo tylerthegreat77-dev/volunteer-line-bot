@@ -637,8 +637,8 @@ app.get('/admin', (req, res) => {
         }
 
         function renderCharts(data) {
-          const facultyHours = { '01': 0, '02': 0, '03': 0 };
-          const facultyCounts = { '01': 0, '02': 0, '03': 0 };
+          const facultyHours = { '01': 0, '02': 0, '03': 0,'04': 0 };
+          const facultyCounts = { '01': 0, '02': 0, '03': 0,'04': 0 };
 
           data.forEach(item => {
             if (facultyHours[item.facultyCode] !== undefined) {
@@ -653,11 +653,11 @@ app.get('/admin', (req, res) => {
           facultyChart = new Chart(ctxBar, {
             type: 'bar',
             data: {
-              labels: ['วิทยาศาสตร์ฯ (01)', 'บริหารธุรกิจฯ (02)', 'วิศวกรรมศาสตร์ (03)'],
+              labels: ['วิทยาศาสตร์ฯ (01)', 'บริหารธุรกิจฯ (02)', 'วิศวกรรมศาสตร์ (03)', 'สหวิทยาการ (04)'],
               datasets: [{
                 label: 'ชั่วโมงสะสม',
-                data: [facultyHours['01'], facultyHours['02'], facultyHours['03']],
-                backgroundColor: ['rgba(16, 185, 129, 0.85)', 'rgba(79, 70, 229, 0.85)', 'rgba(245, 158, 11, 0.85)'],
+                data: [facultyHours['01'], facultyHours['02'], facultyHours['03'], facultyHours['04']],
+                backgroundColor: ['rgba(16, 185, 129, 0.85)', 'rgba(79, 70, 229, 0.85)', 'rgba(245, 158, 11, 0.85)', 'rgba(58, 245, 11, 0.85)'],
                 borderRadius: 8
               }]
             },
@@ -701,7 +701,8 @@ app.get('/admin', (req, res) => {
           const facultyColors = {
             '01': 'bg-success-subtle text-success border-success-subtle',
             '02': 'bg-primary-subtle text-primary border-primary-subtle',
-            '03': 'bg-warning-subtle text-warning-emphasis border-warning-subtle'
+            '03': 'bg-warning-subtle text-warning-emphasis border-warning-subtle',
+            '04': 'bg-success-subtle text-success border-success-subtle'
           };
 
           data.forEach(item => {
