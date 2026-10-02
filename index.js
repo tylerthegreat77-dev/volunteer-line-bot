@@ -75,7 +75,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // เชื่อมต่อ MongoDB (ใส่ Fallback URI สำรองป้องกัน MONGODB_URI ใน Render อ่านค่าไม่ได้)
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb+srv://volunteer_user:wfvZwcF3XuRdvhZy@cluster0.3rc3oyf.mongodb.net/volunteer_db?appName=Cluster0';
+const MONGO_URI = 'mongodb+srv://volunteer_user:wfvZwcF3XuRdvhZy@cluster0.3rc3oyf.mongodb.net/volunteer_db?appName=Cluster0';
   console.log('🔍 MONGO_URI ที่กำลังใช้:');
 console.log(MONGO_URI.replace(/\/\/([^:]+):([^@]+)@/, '//$1:wfvZwcF3XuRdvhZy@'));
 mongoose.connect(MONGO_URI)
