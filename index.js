@@ -76,7 +76,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // เชื่อมต่อ MongoDB (ใส่ Fallback URI สำรองป้องกัน MONGODB_URI ใน Render อ่านค่าไม่ได้)
 const MONGO_URI = process.env.MONGODB_URI || 'mongodb+srv://volunteer_user:wfvZwcF3XuRdvhZy@cluster0.3rc3oyf.mongodb.net/volunteer_db?appName=Cluster0';
-
+  console.log('🔍 MONGO_URI ที่กำลังใช้:');
+console.log(MONGO_URI.replace(/\/\/([^:]+):([^@]+)@/, '//$1:wfvZwcF3XuRdvhZy@'));
 mongoose.connect(MONGO_URI)
   .then(async () => {
     console.log('✅ เชื่อมต่อ MongoDB สำเร็จแล้ว!');
@@ -1055,7 +1056,7 @@ async function handleEvent(event) {
                    `01 = คณะวิทยาศาสตร์และเทคโนโลยีการเกษตร\n` +
                    `02 = คณะบริหารธุรกิจและศิลปศาสตร์\n` +
                    `03 = คณะวิศวกรรมศาสตร์\n`+
-                    `04 = สหวิทยาการ\n\n` +
+                   `04 = สหวิทยาการ\n\n` +
                    `💡 ตัวอย่าง:\nบันทึก 01 6501234567 สมชาย ใจดี 4 ทำความสะอาดวัด\n\n` +
                    `🔍 เช็คชั่วโมงสะสม:\n` +
                    `พิมพ์: เช็คชั่วโมง <รหัสนักศึกษา>`;
